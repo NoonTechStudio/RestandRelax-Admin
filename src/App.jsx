@@ -15,7 +15,7 @@ import { Dashboard, Locations, Review, Memories, LocationForm } from "./pages";
 import { AddLocation, GetLocations } from "./components/Locations";
 import { AddReview, GetReviews } from "./components/Reviews";
 import { AddImage, GetImages } from "./components/Memories";
-import HomepageHeroManagement from "./components/HomePageHeroManagement";
+import HomepageHeroManagement from "./components/HomepageHeroManagement";
 
 function App() {
   return (
