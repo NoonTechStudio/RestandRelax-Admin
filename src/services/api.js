@@ -36,13 +36,13 @@ api.interceptors.response.use(
   }
 );
 
-// Auth API methods
+// Auth API methods - ADD /api PREFIX TO ALL ROUTES
 export const authAPI = {
-  login: (credentials) => api.post('/admin/login', credentials),
-  register: (adminData) => api.post('/admin/register', adminData),
-  getProfile: () => api.get('/admin/profile'),
-  updateProfile: (profileData) => api.put('/admin/profile', profileData),
-  changePassword: (passwordData) => api.put('/admin/change-password', passwordData),
+  login: (credentials) => api.post('/api/admin/login', credentials),
+  register: (adminData) => api.post('/api/admin/register', adminData),
+  getProfile: () => api.get('/api/admin/profile'),
+  updateProfile: (profileData) => api.put('/api/admin/profile', profileData),
+  changePassword: (passwordData) => api.put('/api/admin/change-password', passwordData),
 };
 
 // Export the main api instance for other requests
