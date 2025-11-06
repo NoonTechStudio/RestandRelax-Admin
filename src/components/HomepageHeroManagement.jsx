@@ -89,7 +89,7 @@ const HomepageHeroManagement = () => {
 
   const activateSet = async (setId) => {
     try {
-      await axios.patch(`${API_BASE_URL}/homepage-hero/${setId}/activate`);
+      await axios.put(`${API_BASE_URL}/homepage-hero/activate/${setId}`);
       await fetchHeroData(); // Refresh data
       toast.success("Hero set activated successfully!");
     } catch (error) {
