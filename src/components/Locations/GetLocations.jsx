@@ -40,7 +40,7 @@ export default function GetLocations() {
       >
         <div className="flex-1 w-0 p-4">
           <div className="flex items-start">
-            <div className="flex-shrink-0 pt-0.5">
+            <div className="shrink-0 pt-0.5">
               <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
                 <Trash2 className="w-5 h-5 text-red-600" />
               </div>
