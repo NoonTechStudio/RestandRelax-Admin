@@ -67,6 +67,14 @@ export const paymentAPI = {
   
   // Refund payment (admin only)
   refundPayment: (paymentId, refundData) => api.post(`/payments/${paymentId}/refund`, refundData),
+
+  // Pool party payment processing
+  createPoolPartyOrder: (orderData) => api.post('/payments/create-poolparty-order', orderData),
+  verifyPoolPartyPayment: (paymentData) => api.post('/payments/verify-poolparty', paymentData),
+  
+  // Pool party admin payment processing
+  markPoolPartyAsPaid: (bookingId, paymentData) => api.post(`/pool-parties/bookings/${bookingId}/mark-paid`, paymentData),
+  updatePoolPartyPaymentStatus: (bookingId, paymentData) => api.patch(`/pool-parties/bookings/${bookingId}/payment-status`, paymentData),
 };
 
 export default paymentAPI;

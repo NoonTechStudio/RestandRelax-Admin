@@ -6,15 +6,51 @@ import BasicInformation from '../components/Locations/steps/BasicInformation';
 import LocationAddress from '../components/Locations/steps/LocationAddress';
 import PropertyFeatures from '../components/Locations/steps/PropertyFeatures';
 import PricingAmenities from '../components/Locations/steps/PricingAmenities';
+import PoolPartyDetails from '../components/Locations/steps/PoolPartyDetails';
 import ReviewSubmit from '../components/Locations/steps/ReviewSubmit';
 import { getLocationById, createLocation, updateLocation } from '../services/locationApi';
+import { createPoolParty, updatePoolParty, getPoolPartyByLocationId, deletePoolParty } from '../services/poolPartyApi';
 
 const steps = [
   'Basic Information',
   'Location & Address',
   'Property Features',
   'Pricing & Amenities',
+  'Pool Party Details',
   'Review & Submit'
+];
+
+const defaultTimings = [
+  { 
+    session: 'Morning', 
+    startTime: '08:00', 
+    endTime: '14:00',
+    capacity: 0,
+    pricing: {
+      perAdult: 0,
+      perKid: 0
+    }
+  },
+  { 
+    session: 'Evening', 
+    startTime: '15:00', 
+    endTime: '21:00',
+    capacity: 0,
+    pricing: {
+      perAdult: 0,
+      perKid: 0
+    }
+  },
+  { 
+    session: 'Full Day', 
+    startTime: '08:00', 
+    endTime: '20:00',
+    capacity: 0,
+    pricing: {
+      perAdult: 0,
+      perKid: 0
+    }
+  }
 ];
 
 const LocationForm = () => {
@@ -57,8 +93,22 @@ const LocationForm = () => {
       pricePerAdult: '',
       pricePerKid: '',
       extraPersonCharge: ''
-    }
+    },
+    isPoolPartyAvailable: false
   });
+
+  // Change the default poolPartyData state:
+const [poolPartyData, setPoolPartyData] = useState({
+  timings: defaultTimings.map(timing => ({
+    ...timing,
+    capacity: 0,
+    pricing: {
+      perAdult: 0,
+      perKid: 0
+    }
+  }))
+});
+const [poolPartyId, setPoolPartyId] = useState(null);
 
   useEffect(() => {
     if (id) {
@@ -66,19 +116,85 @@ const LocationForm = () => {
     }
   }, [id]);
 
-  const fetchLocationData = async () => {
-    try {
-      setLoading(true);
-      const location = await getLocationById(id);
-      setFormData(location);
-      toast.success('Location data loaded successfully');
-    } catch (error) {
-      toast.error('Failed to load location data');
-      console.error('Error fetching location:', error);
-    } finally {
-      setLoading(false);
+  // Update fetchLocationData to save pool party ID
+const fetchLocationData = async () => {
+  try {
+    setLoading(true);
+    const location = await getLocationById(id);
+    
+    // Format the location data for the form
+    const formattedLocation = {
+      ...location,
+      capacityOfPersons: location.capacityOfPersons?.toString() || '',
+      propertyDetails: {
+        bedrooms: location.propertyDetails?.bedrooms?.toString() || '',
+        acBedrooms: location.propertyDetails?.acBedrooms?.toString() || '',
+        nonAcBedrooms: location.propertyDetails?.nonAcBedrooms?.toString() || '',
+        kitchens: location.propertyDetails?.kitchens?.toString() || '',
+        livingRooms: location.propertyDetails?.livingRooms?.toString() || '',
+        halls: location.propertyDetails?.halls?.toString() || '',
+        bathrooms: location.propertyDetails?.bathrooms?.toString() || '',
+        swimmingPools: location.propertyDetails?.swimmingPools?.toString() || '',
+        privateRooms: location.propertyDetails?.privateRooms?.toString() || '',
+        withFood: location.propertyDetails?.withFood || false,
+        nightStay: location.propertyDetails?.nightStay || false
+      },
+      pricing: {
+        pricePerAdult: location.pricing?.pricePerAdult?.toString() || '',
+        pricePerKid: location.pricing?.pricePerKid?.toString() || '',
+        extraPersonCharge: location.pricing?.extraPersonCharge?.toString() || ''
+      },
+      amenities: location.amenities || []
+    };
+    
+    setFormData(formattedLocation);
+    
+    // Fetch pool party data if available
+    if (location.isPoolPartyAvailable) {
+      try {
+        const poolParty = await getPoolPartyByLocationId(id);
+        if (poolParty) {
+          // Save the pool party ID
+          setPoolPartyId(poolParty._id);
+          
+          // Format pool party timings
+          const formattedTimings = poolParty.timings?.map(timing => ({
+            session: timing.session || 'Custom',
+            startTime: timing.startTime || '',
+            endTime: timing.endTime || '',
+            capacity: timing.capacity?.toString() || '0',
+            pricing: {
+              perAdult: timing.pricing?.perAdult?.toString() || '0',
+              perKid: timing.pricing?.perKid?.toString() || '0'
+            }
+          })) || defaultTimings;
+          
+          setPoolPartyData({
+            timings: formattedTimings
+          });
+        }
+      } catch (error) {
+        console.log('No pool party data found for this location:', error.message);
+        // Initialize with default if not found but isPoolPartyAvailable is true
+        setPoolPartyData({
+          timings: defaultTimings.map(timing => ({
+            ...timing,
+            capacity: 0,
+            pricing: { perAdult: 0, perKid: 0 }
+          }))
+        });
+      }
     }
-  };
+    
+    toast.success('Location data loaded successfully');
+  } catch (error) {
+    toast.error('Failed to load location data');
+    console.error('Error fetching location:', error);
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const handleNext = () => {
     if (validateCurrentStep()) {
@@ -117,52 +233,125 @@ const LocationForm = () => {
           return false;
         }
         break;
+      case 4:
+        if (formData.isPoolPartyAvailable) {
+          // Use the exported validation function from PoolPartyDetails
+          const validationResult = PoolPartyDetails.validateCurrentStep(formData, poolPartyData);
+          
+          if (validationResult !== true) {
+            if (Array.isArray(validationResult)) {
+              validationResult.forEach(error => toast.error(error));
+            } else {
+              toast.error(validationResult);
+            }
+            return false;
+          }
+        }
+        break;
     }
     return true;
   };
 
-  const handleSubmit = async () => {
-    try {
-      setLoading(true);
+  // Update handleSubmit function
+const handleSubmit = async () => {
+  try {
+    setLoading(true);
+    
+    // Prepare location data
+    const submitData = {
+      ...formData,
+      capacityOfPersons: parseInt(formData.capacityOfPersons) || 0,
+      propertyDetails: {
+        bedrooms: parseInt(formData.propertyDetails.bedrooms || 0),
+        acBedrooms: parseInt(formData.propertyDetails.acBedrooms || 0),
+        nonAcBedrooms: parseInt(formData.propertyDetails.nonAcBedrooms || 0),
+        kitchens: parseInt(formData.propertyDetails.kitchens || 0),
+        livingRooms: parseInt(formData.propertyDetails.livingRooms || 0),
+        halls: parseInt(formData.propertyDetails.halls || 0),
+        bathrooms: parseInt(formData.propertyDetails.bathrooms || 0),
+        swimmingPools: parseInt(formData.propertyDetails.swimmingPools || 0),
+        privateRooms: parseInt(formData.propertyDetails.privateRooms || 0),
+        withFood: Boolean(formData.propertyDetails.withFood),
+        nightStay: Boolean(formData.propertyDetails.nightStay)
+      },
+      pricing: {
+        pricePerAdult: parseFloat(formData.pricing.pricePerAdult || 0),
+        pricePerKid: parseFloat(formData.pricing.pricePerKid || 0),
+        extraPersonCharge: parseFloat(formData.pricing.extraPersonCharge || 0)
+      },
+      amenities: formData.amenities || []
+    };
+
+    let locationId;
+    if (id) {
+      const updatedLocation = await updateLocation(id, submitData);
+      locationId = updatedLocation._id || id;
+      toast.success('Location updated successfully!');
+    } else {
+      const newLocation = await createLocation(submitData);
+      locationId = newLocation._id;
+      toast.success('Location created successfully!');
+    }
+
+    // Handle pool party data
+    if (formData.isPoolPartyAvailable && locationId) {
+      // Calculate total capacity from individual session capacities
+      const totalCapacity = poolPartyData.timings.reduce(
+        (sum, timing) => sum + (parseInt(timing.capacity) || 0), 
+        0
+      );
       
-      const submitData = {
-        ...formData,
-        capacityOfPersons: parseInt(formData.capacityOfPersons),
-        propertyDetails: {
-          ...formData.propertyDetails,
-          bedrooms: parseInt(formData.propertyDetails.bedrooms || 0),
-          acBedrooms: parseInt(formData.propertyDetails.acBedrooms || 0),
-          nonAcBedrooms: parseInt(formData.propertyDetails.nonAcBedrooms || 0),
-          kitchens: parseInt(formData.propertyDetails.kitchens || 0),
-          livingRooms: parseInt(formData.propertyDetails.livingRooms || 0),
-          halls: parseInt(formData.propertyDetails.halls || 0),
-          bathrooms: parseInt(formData.propertyDetails.bathrooms || 0),
-          swimmingPools: parseInt(formData.propertyDetails.swimmingPools || 0),
-          privateRooms: parseInt(formData.propertyDetails.privateRooms || 0)
-        },
-        pricing: {
-          pricePerAdult: parseFloat(formData.pricing.pricePerAdult || 0),
-          pricePerKid: parseFloat(formData.pricing.pricePerKid || 0),
-          extraPersonCharge: parseFloat(formData.pricing.extraPersonCharge || 0)
-        }
+      // Prepare pool party data
+      const poolPartySubmitData = {
+        locationId: locationId,
+        locationName: formData.name,
+        totalCapacity: totalCapacity,
+        timings: poolPartyData.timings.map(timing => ({
+          session: timing.session,
+          startTime: timing.startTime,
+          endTime: timing.endTime,
+          capacity: parseInt(timing.capacity) || 0,
+          pricing: {
+            perAdult: parseFloat(timing.pricing?.perAdult || 0),
+            perKid: parseFloat(timing.pricing?.perKid || 0)
+          }
+        }))
       };
 
-      if (id) {
-        await updateLocation(id, submitData);
-        toast.success('Location updated successfully!');
-      } else {
-        await createLocation(submitData);
-        toast.success('Location created successfully!');
+      try {
+        if (id && poolPartyId) {
+          // Update existing pool party by its ID
+          await updatePoolParty(poolPartyId, poolPartySubmitData);
+          toast.success('Pool party details updated successfully!');
+        } else {
+          // Create new pool party
+          const newPoolParty = await createPoolParty(poolPartySubmitData);
+          setPoolPartyId(newPoolParty._id);
+          toast.success('Pool party details saved successfully!');
+        }
+      } catch (poolPartyError) {
+        console.error('Error saving pool party:', poolPartyError);
+        toast.error('Failed to save pool party details, but location was saved');
       }
-      
-      navigate('/locations');
-    } catch (error) {
-      toast.error(`Failed to ${id ? 'update' : 'create'} location`);
-      console.error('Error submitting location:', error);
-    } finally {
-      setLoading(false);
+    } else if (id && !formData.isPoolPartyAvailable) {
+      // If pool party was disabled, delete existing pool party data
+      try {
+        await deletePoolParty(id);
+        setPoolPartyId(null);
+        console.log('Pool party data removed');
+      } catch (deleteError) {
+        console.log('No pool party data to delete or error deleting:', deleteError.message);
+      }
     }
-  };
+
+    navigate('/locations');
+  } catch (error) {
+    console.error('Error submitting location:', error);
+    toast.error(`Failed to ${id ? 'update' : 'create'} location: ${error.message || 'Unknown error'}`);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleCancel = () => {
     setShowCancelConfirm(true);
@@ -178,15 +367,50 @@ const LocationForm = () => {
   const renderStepContent = () => {
     switch (activeStep) {
       case 0:
-        return <BasicInformation formData={formData} setFormData={setFormData} />;
+        return (
+          <BasicInformation 
+            formData={formData} 
+            setFormData={setFormData} 
+          />
+        );
       case 1:
-        return <LocationAddress formData={formData} setFormData={setFormData} />;
+        return (
+          <LocationAddress 
+            formData={formData} 
+            setFormData={setFormData} 
+          />
+        );
       case 2:
-        return <PropertyFeatures formData={formData} setFormData={setFormData} />;
+        return (
+          <PropertyFeatures 
+            formData={formData} 
+            setFormData={setFormData} 
+          />
+        );
       case 3:
-        return <PricingAmenities formData={formData} setFormData={setFormData} />;
+        return (
+          <PricingAmenities 
+            formData={formData} 
+            setFormData={setFormData} 
+          />
+        );
       case 4:
-        return <ReviewSubmit formData={formData} />;
+        return (
+          <PoolPartyDetails 
+            formData={formData}
+            poolPartyData={poolPartyData}
+            setPoolPartyData={setPoolPartyData}
+            isEditing={!!id}
+          />
+        );
+      case 5:
+        return (
+          <ReviewSubmit 
+            formData={formData} 
+            poolPartyData={formData.isPoolPartyAvailable ? poolPartyData : null} 
+            isEditing={!!id}
+          />
+        );
       default:
         return null;
     }

@@ -10,7 +10,6 @@ import {
   MapPin, 
   DollarSign,
   Users,
-  Utensils,
   CheckCircle,
   XCircle,
   Clock,
@@ -23,26 +22,25 @@ import {
   IndianRupee,
   Wallet,
   AlertCircle,
-  Mail
+  Mail,
+  Download,
+  CalendarDays
 } from 'lucide-react';
-import { paymentAPI } from '../../services/paymentApi';
-import AdminPaymentModal from './AdminPaymentModal';
-import LoadingSpinner from '../ui/LoadingSpinner';
-import Toast from '../ui/Toast';
+import { paymentAPI } from '../services/paymentApi';
+import LoadingSpinner from '../components/ui/LoadingSpinner';
+import Toast from '../components/ui/Toast';
 
-const GetBookings = () => {
+const GetPoolPartyBookings = () => {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
   const [paymentTypeFilter, setPaymentTypeFilter] = useState('all');
+  const [sessionFilter, setSessionFilter] = useState('all');
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
-  const [showPaymentAnalytics, setShowPaymentAnalytics] = useState(false);
-  const [paymentAnalytics, setPaymentAnalytics] = useState(null);
   const [razorpayLoading, setRazorpayLoading] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -92,7 +90,7 @@ const GetBookings = () => {
   const fetchBookings = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/bookings`);
+      const response = await fetch(`${API_BASE_URL}/pool-parties/bookings/all`);
       const data = await response.json();
       
       if (data.success) {
@@ -101,23 +99,10 @@ const GetBookings = () => {
         throw new Error(data.error || 'Failed to fetch bookings');
       }
     } catch (error) {
-      console.error('Error fetching bookings:', error);
+      console.error('Error fetching pool party bookings:', error);
       showToast('Failed to load bookings', 'error');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchPaymentAnalytics = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/bookings/analytics/payments`);
-      const data = await response.json();
-      
-      if (data.success) {
-        setPaymentAnalytics(data);
-      }
-    } catch (error) {
-      console.error('Error fetching payment analytics:', error);
     }
   };
 
@@ -136,7 +121,7 @@ const GetBookings = () => {
     setShowConfirmModal(true);
   };
 
-  // Razorpay payment function
+  // Razorpay payment function for pool party
   const initiateRazorpayPayment = async (booking) => {
     if (!window.Razorpay) {
       showToast('Payment gateway is loading, please try again in a moment', 'error');
@@ -151,14 +136,14 @@ const GetBookings = () => {
     setRazorpayLoading(true);
 
     try {
-      console.log('🔄 Creating Razorpay order...');
+      console.log('🔄 Creating Razorpay order for pool party...');
       
       // Determine payment amount based on payment type
       let paymentAmount = 0;
       if (booking.paymentType === 'full') {
-        paymentAmount = booking.pricing?.totalPrice || 0;
+        paymentAmount = booking.pricing?.totalPrice || booking.pricing?.totalAmount || 0;
       } else if (booking.paymentType === 'token') {
-        paymentAmount = booking.remainingAmount > 0 ? booking.remainingAmount : (booking.pricing?.totalPrice || 0);
+        paymentAmount = booking.remainingAmount > 0 ? booking.remainingAmount : (booking.pricing?.totalPrice || booking.pricing?.totalAmount || 0);
       }
 
       if (paymentAmount <= 0) {
@@ -166,13 +151,14 @@ const GetBookings = () => {
         return;
       }
 
-      // Create Razorpay order
-      const orderResponse = await paymentAPI.createOrder({
+      // Create Razorpay order for pool party
+      const orderResponse = await paymentAPI.createPoolPartyOrder({
         bookingId: booking._id,
         amount: paymentAmount,
         currency: 'INR',
-        userEmail: booking.email || '', // You can add email field to your form
-        userPhone: booking.phone
+        userEmail: booking.email,
+        userPhone: booking.phone,
+        userName: booking.guestName
       });
 
       if (!orderResponse.data.success) {
@@ -185,24 +171,25 @@ const GetBookings = () => {
         key: key,
         amount: order.amount,
         currency: order.currency,
-        name: 'Resort Booking System',
-        description: `Payment for booking ${booking._id}`,
-        image: '/logo.png', // Add your logo path
+        name: 'Pool Party Booking System',
+        description: `Payment for pool party booking ${booking._id}`,
+        image: '/logo.png',
         order_id: order.id,
         handler: async function (response) {
           await verifyRazorpayPayment(response, booking._id);
         },
         prefill: {
-          name: booking.name,
+          name: booking.guestName,
           contact: booking.phone,
-          email: booking.email || '', // Add email if available
+          email: booking.email,
         },
         notes: {
           bookingId: booking._id,
-          guestName: booking.name
+          guestName: booking.guestName,
+          bookingType: 'poolparty'
         },
         theme: {
-          color: '#4F46E5'
+          color: '#008DDA'
         },
         modal: {
           ondismiss: function() {
@@ -222,12 +209,12 @@ const GetBookings = () => {
     }
   };
 
-  // Verify Razorpay payment
+  // Verify Razorpay payment for pool party
   const verifyRazorpayPayment = async (paymentResponse, bookingId) => {
     try {
-      console.log('🔄 Verifying payment...');
+      console.log('🔄 Verifying pool party payment...');
       
-      const verifyResponse = await paymentAPI.verifyPayment({
+      const verifyResponse = await paymentAPI.verifyPoolPartyPayment({
         razorpay_order_id: paymentResponse.razorpay_order_id,
         razorpay_payment_id: paymentResponse.razorpay_payment_id,
         razorpay_signature: paymentResponse.razorpay_signature,
@@ -252,25 +239,33 @@ const GetBookings = () => {
   // Mark as paid without payment
   const handleMarkAsPaid = async (booking) => {
     showConfirmation(
-      'Mark this booking as fully paid without actual payment?',
+      'Mark this pool party booking as fully paid without actual payment?',
       async () => {
         try {
-          console.log('🔄 Marking booking as paid...');
-          const response = await paymentAPI.markAsPaid({
-            bookingId: booking._id,
-            notes: 'Marked as paid by admin without payment'
+          console.log('🔄 Marking pool party booking as paid...');
+          
+          const response = await fetch(`${API_BASE_URL}/pool-parties/bookings/${booking._id}/mark-paid`, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+            },
+            body: JSON.stringify({
+              notes: 'Marked as paid by admin without payment'
+            })
           });
 
-          if (response.data.success) {
-            showToast('Booking marked as paid successfully!', 'success');
-            fetchBookings(); // Refresh bookings list
+          const data = await response.json();
+
+          if (data.success) {
+            showToast('Pool party booking marked as paid successfully!', 'success');
+            fetchBookings();
           } else {
-            throw new Error(response.data.error || 'Failed to mark as paid');
+            throw new Error(data.error || 'Failed to mark as paid');
           }
         } catch (error) {
           console.error('❌ Error marking as paid:', error);
           
-          // Handle specific error cases
           if (error.response?.status === 401) {
             showToast('Session expired. Please login again.', 'error');
             localStorage.removeItem('adminToken');
@@ -289,46 +284,45 @@ const GetBookings = () => {
     );
   };
 
-  // Filter bookings based on search and status
+  // Filter bookings
   const filteredBookings = bookings.filter(booking => {
     const matchesSearch = 
-      booking.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      booking.guestName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       booking.phone?.includes(searchTerm) ||
       booking.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      booking.location?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      booking.razorpayOrderId?.includes(searchTerm);
+      booking.locationId?.name?.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesStatus = statusFilter === 'all' || booking.paymentStatus === statusFilter;
-    
     const matchesPaymentType = paymentTypeFilter === 'all' || booking.paymentType === paymentTypeFilter;
+    const matchesSession = sessionFilter === 'all' || booking.session === sessionFilter;
     
     // Date filtering
     let matchesDate = true;
     if (dateFilter !== 'all') {
       const today = new Date();
-      const checkInDate = new Date(booking.checkInDate);
+      const bookingDate = new Date(booking.bookingDate);
       
       switch (dateFilter) {
         case 'today':
-          matchesDate = checkInDate.toDateString() === today.toDateString();
+          matchesDate = bookingDate.toDateString() === today.toDateString();
           break;
         case 'upcoming':
-          matchesDate = checkInDate > today;
+          matchesDate = bookingDate > today;
           break;
         case 'past':
-          matchesDate = checkInDate < today;
+          matchesDate = bookingDate < today;
           break;
         case 'thisWeek':
           const startOfWeek = new Date(today.setDate(today.getDate() - today.getDay()));
           const endOfWeek = new Date(today.setDate(today.getDate() - today.getDay() + 6));
-          matchesDate = checkInDate >= startOfWeek && checkInDate <= endOfWeek;
+          matchesDate = bookingDate >= startOfWeek && bookingDate <= endOfWeek;
           break;
         default:
           matchesDate = true;
       }
     }
     
-    return matchesSearch && matchesStatus && matchesDate && matchesPaymentType;
+    return matchesSearch && matchesStatus && matchesDate && matchesPaymentType && matchesSession;
   });
 
   const getStatusBadge = (status) => {
@@ -366,23 +360,31 @@ const GetBookings = () => {
     );
   };
 
+  const getSessionBadge = (session) => {
+    const sessionConfig = {
+      Morning: { color: 'bg-amber-100 text-amber-800', label: 'Morning' },
+      Evening: { color: 'bg-indigo-100 text-indigo-800', label: 'Evening' },
+      'Full Day': { color: 'bg-teal-100 text-teal-800', label: 'Full Day' }
+    };
+    
+    const config = sessionConfig[session] || sessionConfig.Morning;
+    
+    return (
+      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${config.color}`}>
+        <CalendarDays className="w-3 h-3 mr-1" />
+        {config.label}
+      </span>
+    );
+  };
+
   const formatDate = (dateString) => {
-  const date = new Date(dateString);
-  
-  // Get UTC date parts (to avoid timezone conversion issues)
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth();
-  const day = date.getUTCDate();
-  
-  // Create date in local timezone for display
-  const localDate = new Date(year, month, day);
-  
-  return localDate.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  });
-};
+    return new Date(dateString).toLocaleDateString('en-US', {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-IN', {
@@ -393,19 +395,6 @@ const GetBookings = () => {
     }).format(amount || 0);
   };
 
-  const getDaysUntilCheckIn = (checkInDate) => {
-    const today = new Date();
-    const checkIn = new Date(checkInDate);
-    const diffTime = checkIn - today;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return 'Tomorrow';
-    if (diffDays > 1) return `In ${diffDays} days`;
-    if (diffDays === -1) return 'Yesterday';
-    return `${Math.abs(diffDays)} days ago`;
-  };
-
   const handlePaymentClick = (booking) => {
     if (booking.paymentStatus === 'paid') {
       showToast('This booking is already paid', 'info');
@@ -413,34 +402,18 @@ const GetBookings = () => {
     }
     
     // Use Razorpay payment for pending/partial payments
-    // if (booking.paymentStatus === 'pending' || booking.paymentStatus === 'partially_paid') {
-    if (booking.paymentStatus === 'pending') {
+    if (booking.paymentStatus === 'pending' || booking.paymentStatus === 'partially_paid') {
       initiateRazorpayPayment(booking);
-    } else {
-      setSelectedBooking(booking);
-      setShowPaymentModal(true);
     }
-  };
-
-  const handlePaymentSuccess = (paymentData) => {
-    showToast('Payment completed successfully!', 'success');
-    setShowPaymentModal(false);
-    fetchBookings(); // Refresh the list
-  };
-
-  const handlePaymentFailure = (error) => {
-    showToast(`Payment failed: ${error}`, 'error');
-    setShowPaymentModal(false);
-    fetchBookings(); // Refresh the list
   };
 
   const handleDeleteBooking = async (bookingId) => {
     showConfirmation(
-      "Are you sure you want to delete this booking?",
+      "Are you sure you want to delete this pool party booking?",
       async () => {
         setActionLoading("deleting");
         try {
-          const response = await fetch(`${API_BASE_URL}/bookings/${bookingId}`, {
+          const response = await fetch(`${API_BASE_URL}/pool-parties/bookings/${bookingId}`, {
             method: "DELETE",
           });
 
@@ -448,7 +421,7 @@ const GetBookings = () => {
 
           if (response.ok) {
             showToast("Booking deleted successfully!", "success");
-            fetchBookings(); // Refresh list
+            fetchBookings();
           } else {
             showToast(data.error || "Failed to delete booking", "error");
           }
@@ -471,7 +444,7 @@ const GetBookings = () => {
         ...(remainingAmount !== null && { remainingAmount })
       };
 
-      const response = await fetch(`${API_BASE_URL}/bookings/${bookingId}/payment-status`, {
+      const response = await fetch(`${API_BASE_URL}/pool-parties/bookings/${bookingId}/payment-status`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -498,14 +471,29 @@ const GetBookings = () => {
     showToast('Bookings refreshed successfully', 'success');
   };
 
-  const handleExport = () => {
-    // Implement CSV export functionality
-    showToast('Export feature coming soon', 'info');
-  };
-
-  const handleShowAnalytics = async () => {
-    setShowPaymentAnalytics(true);
-    await fetchPaymentAnalytics();
+  const handleDownloadPDF = async (bookingId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/pool-parties/${bookingId}/download-pdf`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to download PDF');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `poolparty-booking-${bookingId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      
+      showToast('PDF downloaded successfully!', 'success');
+    } catch (error) {
+      console.error('PDF download error:', error);
+      showToast('Failed to download PDF', 'error');
+    }
   };
 
   const getBookingStats = () => {
@@ -530,7 +518,7 @@ const GetBookings = () => {
   const stats = getBookingStats();
 
   const PaymentBreakdown = ({ booking }) => {
-    const totalAmount = booking.pricing?.totalPrice || 0;
+    const totalAmount = booking.pricing?.totalPrice || booking.pricing?.totalAmount || 0;
     const amountPaid = booking.amountPaid || 0;
     const remainingAmount = booking.remainingAmount || 0;
     const isTokenPayment = booking.paymentType === 'token';
@@ -552,7 +540,7 @@ const GetBookings = () => {
           </div>
         )}
         {isTokenPayment && (
-          <div className="mt-1 px-2 py-1 bg-purple-50 border border-purple-200 rounded text-purple-700">
+          <div className="mt-1 px-2 py-1 bg-purple-50 border border-purple-200 rounded text-purple-700 text-xs">
             Token Payment
           </div>
         )}
@@ -610,37 +598,12 @@ const GetBookings = () => {
         </div>
       )}
 
-      {/* Authentication Status Banner */}
-      {!isAuthenticated && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex items-center">
-            <AlertCircle className="w-5 h-5 text-red-600 mr-2" />
-            <div>
-              <h4 className="text-red-800 font-semibold">Authentication Required</h4>
-              <p className="text-red-700 text-sm">
-                Please login to access payment features. Payment actions will be disabled until you login.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Payment Modal */}
-      <AdminPaymentModal
-        isOpen={showPaymentModal}
-        onClose={() => setShowPaymentModal(false)}
-        booking={selectedBooking}
-        amount={selectedBooking?.pricing?.totalPrice}
-        onPaymentSuccess={handlePaymentSuccess}
-        onPaymentFailure={handlePaymentFailure}
-      />
-
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Bookings Management</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Pool Party Bookings</h1>
           <p className="text-gray-600 mt-1">
-            Manage all resort bookings and reservations
+            Manage all pool party bookings and reservations
           </p>
         </div>
         <div className="flex items-center space-x-3">
@@ -648,7 +611,7 @@ const GetBookings = () => {
             {filteredBookings.length} of {bookings.length} bookings
           </span>
           <Link
-            to="/bookings/new"
+            to="/pool-party-bookings/new"
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 transition-colors"
           >
             <Plus className="w-4 h-4 mr-2" />
@@ -657,12 +620,12 @@ const GetBookings = () => {
         </div>
       </div>
 
-      {/* Statistics Cards - UPDATED */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      {/* Statistics Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
           <div className="flex items-center">
             <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-              <Calendar className="w-6 h-6 text-blue-600" />
+              <CalendarDays className="w-6 h-6 text-blue-600" />
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Bookings</p>
@@ -697,30 +660,6 @@ const GetBookings = () => {
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
           <div className="flex items-center">
-            <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
-              <AlertCircle className="w-6 h-6 text-orange-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Partial Paid</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.partiallyPaid}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center">
-            <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
-              <XCircle className="w-6 h-6 text-red-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Failed</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.failed}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center">
             <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center">
               <IndianRupee className="w-6 h-6 text-indigo-600" />
             </div>
@@ -733,7 +672,7 @@ const GetBookings = () => {
         </div>
       </div>
 
-      {/* Filters and Search - UPDATED */}
+      {/* Filters and Search */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
         <div className="flex flex-col sm:flex-row gap-4">
           {/* Search */}
@@ -742,7 +681,7 @@ const GetBookings = () => {
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search by name, phone, location, or order ID..."
+                placeholder="Search by name, phone, email, or location..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
@@ -784,33 +723,25 @@ const GetBookings = () => {
             </div>
           </div>
 
-          {/* Date Filter */}
+          {/* Session Filter */}
           <div className="sm:w-40">
             <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <CalendarDays className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
               <select
-                value={dateFilter}
-                onChange={(e) => setDateFilter(e.target.value)}
+                value={sessionFilter}
+                onChange={(e) => setSessionFilter(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors appearance-none"
               >
-                <option value="all">All Dates</option>
-                <option value="today">Today</option>
-                <option value="upcoming">Upcoming</option>
-                <option value="past">Past</option>
-                <option value="thisWeek">This Week</option>
+                <option value="all">All Sessions</option>
+                <option value="Morning">Morning</option>
+                <option value="Evening">Evening</option>
+                <option value="Full Day">Full Day</option>
               </select>
             </div>
           </div>
 
           {/* Action Buttons */}
           <div className="flex items-center space-x-2">
-            <button
-              onClick={handleShowAnalytics}
-              className="p-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              title="Payment Analytics"
-            >
-              <IndianRupee className="w-5 h-5" />
-            </button>
             <button
               onClick={handleRefresh}
               className="p-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
@@ -822,20 +753,20 @@ const GetBookings = () => {
         </div>
       </div>
 
-      {/* Bookings Table - UPDATED */}
+      {/* Bookings Table */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Guest & Location
+                  Guest Details
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Dates & Duration
+                  Booking Details
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Guests
+                  Guests & Session
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Payment Details
@@ -854,15 +785,8 @@ const GetBookings = () => {
                   <td colSpan="6" className="px-6 py-12 text-center">
                     <div className="text-gray-500">
                       <Calendar className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                      <p className="text-lg font-medium">No bookings found</p>
+                      <p className="text-lg font-medium">No pool party bookings found</p>
                       <p className="text-sm">Try adjusting your search or filters</p>
-                      <Link
-                        to="/bookings/new"
-                        className="inline-flex items-center mt-4 px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 transition-colors"
-                      >
-                        <Plus className="w-4 h-4 mr-2" />
-                        Create First Booking
-                      </Link>
                     </div>
                   </td>
                 </tr>
@@ -876,43 +800,29 @@ const GetBookings = () => {
                         </div>
                         <div className="ml-4">
                           <div className="text-sm font-medium text-gray-900">
-                            {booking.name}
+                            {booking.guestName}
                           </div>
                           <div className="text-sm text-gray-500 flex items-center mt-1">
                             <Phone className="w-3 h-3 mr-1" />
                             {booking.phone}
                           </div>
-                           {/* Add email display */}
-      <div className="text-sm text-gray-500 flex items-center mt-1">
-        <Mail className="w-3 h-3 mr-1" />
-        {booking.email || 'No email'}
-      </div>
+                          <div className="text-xs text-gray-400 flex items-center mt-1">
+                            <Mail className="w-3 h-3 mr-1" />
+                            {booking.email}
+                          </div>
                           <div className="text-xs text-gray-400 flex items-center mt-1">
                             <MapPin className="w-3 h-3 mr-1" />
-                            {booking.location?.name}
+                            {booking.locationId?.name || 'N/A'}
                           </div>
-                          {booking.razorpayOrderId && (
-                            <div className="text-xs text-gray-400 mt-1">
-                              Order: {booking.razorpayOrderId}
-                            </div>
-                          )}
                         </div>
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">
-                        {formatDate(booking.checkInDate)}
+                      <div className="text-sm text-gray-900 font-medium">
+                        {formatDate(booking.bookingDate)}
                       </div>
-                      <div className="text-sm text-gray-500">
-                        to {formatDate(booking.checkOutDate)}
-                      </div>
-                      <div className="text-xs text-gray-400 mt-1">
-                        {Math.ceil((new Date(booking.checkOutDate) - new Date(booking.checkInDate)) / (1000 * 60 * 60 * 24))} nights
-                      </div>
-                      <div className={`text-xs mt-1 ${
-                        new Date(booking.checkInDate) > new Date() ? 'text-green-600' : 'text-gray-500'
-                      }`}>
-                        {getDaysUntilCheckIn(booking.checkInDate)}
+                      <div className="text-xs text-gray-500">
+                        Booked: {new Date(booking.createdAt).toLocaleDateString()}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -925,107 +835,117 @@ const GetBookings = () => {
                           + {booking.kids} Kids
                         </div>
                       )}
-                      {booking.withFood && (
-                        <div className="flex items-center text-xs text-green-600 mt-1">
-                          <Utensils className="w-3 h-3 mr-1" />
-                          With Food
-                        </div>
-                      )}
+                      <div className="mt-2">
+                        {getSessionBadge(booking.session)}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <PaymentBreakdown booking={booking} />
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="">
+                      <div className="space-y-1">
                         {getStatusBadge(booking.paymentStatus)}<br/>
                         {getPaymentTypeBadge(booking.paymentType)}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex items-center space-x-2">
-                        {/* Edit Button */}
-                        <Link
-                          to={`/bookings/edit/${booking._id}`}
-                          className="inline-flex items-center px-3 py-1 border border-gray-300 text-xs font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors"
-                        >
-                          <Edit className="w-3 h-3 mr-1" />
-                          Edit
-                        </Link>
-                        
-                        {/* Payment Button for pending/partial payments */}
-                        {/* {(booking.paymentStatus === 'pending' || booking.paymentStatus === 'partially_paid') && booking.pricing?.totalPrice > 0 && ( */}
-                          {(booking.paymentStatus === 'pending') && booking.pricing?.totalPrice > 0 && (
-                          <button
-                            onClick={() => handlePaymentClick(booking)}
-                            disabled={razorpayLoading || !isAuthenticated}
-                            className="inline-flex items-center px-3 py-1 border border-green-300 text-xs font-medium rounded-lg text-green-700 bg-white hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {razorpayLoading ? (
-                              <LoadingSpinner size="sm" className="mr-1" />
-                            ) : (
-                              <CreditCard className="w-3 h-3 mr-1" />
-                            )}
-                            Pay
-                          </button>
-                        )}
+                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+  <div className="flex items-center space-x-2">
+    {/* Edit Button with Link */}
+    <Link
+      to={`/pool-party-bookings/edit/${booking._id}`}
+      className="inline-flex items-center px-3 py-1 border border-gray-300 text-xs font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+    >
+      <Edit className="w-3 h-3 mr-1" />
+      Edit
+    </Link>
+    
+    {/* Payment Button for pending/partial payments */}
+    {(booking.paymentStatus === 'pending' || booking.paymentStatus === 'partially_paid') && 
+     (booking.pricing?.totalPrice || booking.pricing?.totalAmount || 0) > 0 && (
+      <button
+        onClick={() => handlePaymentClick(booking)}
+        disabled={razorpayLoading || !isAuthenticated}
+        className="inline-flex items-center px-3 py-1 border border-green-300 text-xs font-medium rounded-lg text-green-700 bg-white hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {razorpayLoading ? (
+          <LoadingSpinner size="sm" className="mr-1" />
+        ) : (
+          <CreditCard className="w-3 h-3 mr-1" />
+        )}
+        Pay
+      </button>
+    )}
 
-                        {/* More Actions Dropdown */}
-                        <div className="relative">
-                          <button
-                            onClick={() =>
-                              setActionLoading(actionLoading === booking._id ? null : booking._id)
-                            }
-                            className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
-                          >
-                            <MoreVertical className="w-4 h-4" />
-                          </button>
+    {/* PDF Download Button */}
+    {/* PDF Download Button - Only show for paid or partially_paid bookings */}
+{(booking.paymentStatus === 'paid' || booking.paymentStatus === 'partially_paid') && (
+  <button
+    onClick={() => handleDownloadPDF(booking._id)}
+    className="inline-flex items-center px-3 py-1 border border-blue-300 text-xs font-medium rounded-lg text-blue-700 bg-white hover:bg-blue-50 transition-colors"
+  >
+    <Download className="w-3 h-3 mr-1" />
+    PDF
+  </button>
+)}
 
-                          {actionLoading === booking._id && (
-                            <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10">
-                              {/* Mark as Paid Option */}
-                              {booking.paymentStatus !== 'paid' && (
-                                <button
-                                  onClick={() => handleMarkAsPaid(booking)}
-                                  disabled={!isAuthenticated}
-                                  className="flex items-center px-4 py-2 text-sm text-green-600 hover:bg-gray-100 w-full text-left disabled:opacity-50"
-                                >
-                                  <CheckCircle className="w-4 h-4 mr-2" />
-                                  {isAuthenticated ? 'Mark as Paid' : 'Login Required'}
-                                </button>
-                              )}
-                              
-                              {/* Mark as Partial Paid Option */}
-                              {booking.paymentStatus === 'pending' && (
-                                <button
-                                  onClick={() => {
-                                    const amountPaid = booking.pricing?.totalPrice * 0.5; // 50% as example
-                                    const remainingAmount = booking.pricing?.totalPrice - amountPaid;
-                                    handleUpdatePaymentStatus(booking._id, 'partially_paid', amountPaid, remainingAmount);
-                                  }}
-                                  className="flex items-center px-4 py-2 text-sm text-orange-600 hover:bg-gray-100 w-full text-left"
-                                >
-                                  <AlertCircle className="w-4 h-4 mr-2" />
-                                  Mark as Partial Paid
-                                </button>
-                              )}
+    {/* More Actions Dropdown */}
+    <div className="relative">
+      <button
+        onClick={() =>
+          setActionLoading(actionLoading === booking._id ? null : booking._id)
+        }
+        className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+      >
+        <MoreVertical className="w-4 h-4" />
+      </button>
 
-                              <button
-                                onClick={() => handleDeleteBooking(booking._id)}
-                                disabled={actionLoading === 'deleting'}
-                                className="flex items-center px-4 py-2 text-sm text-red-600 hover:bg-gray-100 w-full text-left disabled:opacity-50"
-                              >
-                                {actionLoading === 'deleting' ? (
-                                  <LoadingSpinner size="sm" className="mr-2" />
-                                ) : (
-                                  <Trash2 className="w-4 h-4 mr-2" />
-                                )}
-                                Delete Booking
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
+      {actionLoading === booking._id && (
+        <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10">
+          {/* Mark as Paid Option */}
+          {booking.paymentStatus !== 'paid' && (
+            <button
+              onClick={() => handleMarkAsPaid(booking)}
+              disabled={!isAuthenticated}
+              className="flex items-center px-4 py-2 text-sm text-green-600 hover:bg-gray-100 w-full text-left disabled:opacity-50"
+            >
+              <CheckCircle className="w-4 h-4 mr-2" />
+              {isAuthenticated ? 'Mark as Paid' : 'Login Required'}
+            </button>
+          )}
+          
+          {/* Mark as Partial Paid Option */}
+          {booking.paymentStatus === 'pending' && (
+            <button
+              onClick={() => {
+                const totalAmount = booking.pricing?.totalPrice || booking.pricing?.totalAmount || 0;
+                const amountPaid = totalAmount * 0.5; // 50% as example
+                const remainingAmount = totalAmount - amountPaid;
+                handleUpdatePaymentStatus(booking._id, 'partially_paid', amountPaid, remainingAmount);
+              }}
+              className="flex items-center px-4 py-2 text-sm text-orange-600 hover:bg-gray-100 w-full text-left"
+            >
+              <AlertCircle className="w-4 h-4 mr-2" />
+              Mark as Partial Paid
+            </button>
+          )}
+
+          <button
+            onClick={() => handleDeleteBooking(booking._id)}
+            disabled={actionLoading === 'deleting'}
+            className="flex items-center px-4 py-2 text-sm text-red-600 hover:bg-gray-100 w-full text-left disabled:opacity-50"
+          >
+            {actionLoading === 'deleting' ? (
+              <LoadingSpinner size="sm" className="mr-2" />
+            ) : (
+              <Trash2 className="w-4 h-4 mr-2" />
+            )}
+            Delete Booking
+          </button>
+        </div>
+      )}
+    </div>
+  </div>
+</td>
                   </tr>
                 ))
               )}
@@ -1033,90 +953,8 @@ const GetBookings = () => {
           </table>
         </div>
       </div>
-
-      {/* Payment Analytics Modal */}
-      {showPaymentAnalytics && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold text-gray-900">Payment Analytics</h3>
-                <button
-                  onClick={() => setShowPaymentAnalytics(false)}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <XCircle className="w-6 h-6" />
-                </button>
-              </div>
-              
-              {paymentAnalytics ? (
-                <div className="space-y-6">
-                  {/* Overall Statistics */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <h4 className="font-semibold text-gray-900 mb-2">Total Revenue</h4>
-                      <p className="text-2xl font-bold text-green-600">
-                        {formatCurrency(paymentAnalytics.overall.totalRevenue)}
-                      </p>
-                    </div>
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <h4 className="font-semibold text-gray-900 mb-2">Collection Rate</h4>
-                      <p className="text-2xl font-bold text-blue-600">
-                        {((paymentAnalytics.overall.collectionRate || 0) * 100).toFixed(1)}%
-                      </p>
-                    </div>
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <h4 className="font-semibold text-gray-900 mb-2">Pending Collection</h4>
-                      <p className="text-2xl font-bold text-orange-600">
-                        {formatCurrency(paymentAnalytics.overall.totalRemainingAmount)}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Payment Type Breakdown */}
-                  <div>
-                    <h4 className="font-semibold text-gray-900 mb-4">Payment Type Breakdown</h4>
-                    <div className="space-y-4">
-                      {paymentAnalytics.analytics.map((type, index) => (
-                        <div key={index} className="bg-white border border-gray-200 rounded-lg p-4">
-                          <div className="flex justify-between items-center mb-2">
-                            <span className="font-medium text-gray-900">
-                              {type._id === 'full' ? 'Full Payments' : 'Token Payments'}
-                            </span>
-                            <span className="text-sm text-gray-500">{type.totalBookings} bookings</span>
-                          </div>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                            <div>
-                              <span className="text-gray-600">Total Revenue:</span>
-                              <p className="font-semibold text-green-600">{formatCurrency(type.totalAmountPaid)}</p>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Pending:</span>
-                              <p className="font-semibold text-orange-600">{formatCurrency(type.totalRemainingAmount)}</p>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Paid Bookings:</span>
-                              <p className="font-semibold">{type.paidBookings}</p>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Avg Payment:</span>
-                              <p className="font-semibold">{formatCurrency(type.averagePayment)}</p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <LoadingSpinner />
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
 
-export default GetBookings;
+export default GetPoolPartyBookings;

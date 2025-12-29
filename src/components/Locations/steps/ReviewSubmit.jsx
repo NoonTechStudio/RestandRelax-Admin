@@ -1,7 +1,7 @@
 // components/steps/ReviewSubmit.jsx
 import React from 'react';
 
-const ReviewSubmit = ({ formData }) => {
+const ReviewSubmit = ({ formData, poolPartyData }) => {
   const renderAddress = () => {
     const { address } = formData;
     return [
@@ -16,6 +16,15 @@ const ReviewSubmit = ({ formData }) => {
       .replace(/([A-Z])/g, ' $1')
       .replace(/^./, str => str.toUpperCase())
       .trim();
+  };
+
+  const formatTime = (timeString) => {
+    if (!timeString) return 'Not set';
+    const [hours, minutes] = timeString.split(':');
+    const hour = parseInt(hours);
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    const formattedHour = hour % 12 || 12;
+    return `${formattedHour}:${minutes} ${ampm}`;
   };
 
   return (
@@ -38,18 +47,38 @@ const ReviewSubmit = ({ formData }) => {
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <p className="text-sm text-gray-600">Name</p>
-              <p className="font-medium text-gray-900">{formData.name}</p>
+              <p className="text-sm text-gray-600">Location Name</p>
+              <p className="font-medium text-gray-900">{formData.name || 'Not provided'}</p>
             </div>
             <div>
               <p className="text-sm text-gray-600">Capacity</p>
-              <p className="font-medium text-gray-900">{formData.capacityOfPersons} persons</p>
+              <p className="font-medium text-gray-900">{formData.capacityOfPersons || 'Not set'} persons</p>
             </div>
             <div className="md:col-span-2">
               <p className="text-sm text-gray-600">Description</p>
               <p className="font-medium text-gray-900">
                 {formData.description || 'No description provided'}
               </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Pool Party Available</p>
+              <div className="flex items-center">
+                {formData.isPoolPartyAvailable ? (
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                    Enabled
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                    Disabled
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -68,9 +97,12 @@ const ReviewSubmit = ({ formData }) => {
           <div className="space-y-2">
             <p className="font-medium text-gray-900">{renderAddress()}</p>
             {formData.coordinates.lat && formData.coordinates.lng && (
-              <p className="text-sm text-gray-600">
+              <div className="flex items-center text-sm text-gray-600">
+                <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                </svg>
                 Coordinates: {formData.coordinates.lat.toFixed(6)}, {formData.coordinates.lng.toFixed(6)}
-              </p>
+              </div>
             )}
           </div>
         </div>
@@ -90,15 +122,20 @@ const ReviewSubmit = ({ formData }) => {
             {Object.entries(formData.propertyDetails).map(([key, value]) => {
               if (typeof value === 'boolean') {
                 return value ? (
-                  <div key={key} className="bg-green-50 border border-green-200 rounded px-3 py-2">
-                    <p className="text-green-800 text-sm font-medium">{formatFieldName(key)}</p>
+                  <div key={key} className="bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                    <div className="flex items-center">
+                      <svg className="w-3 h-3 text-green-600 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                      <p className="text-green-800 text-sm font-medium">{formatFieldName(key)}</p>
+                    </div>
                   </div>
                 ) : null;
               }
               return value ? (
-                <div key={key}>
-                  <p className="text-sm text-gray-600">{formatFieldName(key)}</p>
-                  <p className="font-medium text-gray-900">{value}</p>
+                <div key={key} className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                  <p className="text-xs text-blue-600 uppercase tracking-wide font-medium">{formatFieldName(key)}</p>
+                  <p className="text-blue-800 font-semibold">{value}</p>
                 </div>
               ) : null;
             }).filter(Boolean)}
@@ -122,22 +159,22 @@ const ReviewSubmit = ({ formData }) => {
             <div>
               <h4 className="font-medium text-gray-900 mb-3">Pricing Details</h4>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <p className="text-sm text-gray-600">Price Per Adult</p>
-                  <p className="text-xl font-semibold text-green-600">₹{formData.pricing.pricePerAdult}</p>
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <p className="text-sm text-green-600">Price Per Adult</p>
+                  <p className="text-xl font-semibold text-green-700">₹{formData.pricing.pricePerAdult || '0'}</p>
                 </div>
                 
                 {formData.pricing.pricePerKid && (
-                  <div>
-                    <p className="text-sm text-gray-600">Price Per Kid</p>
-                    <p className="text-xl font-semibold text-green-600">₹{formData.pricing.pricePerKid}</p>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-sm text-blue-600">Price Per Kid</p>
+                    <p className="text-xl font-semibold text-blue-700">₹{formData.pricing.pricePerKid}</p>
                   </div>
                 )}
                 
                 {formData.pricing.extraPersonCharge && (
-                  <div>
-                    <p className="text-sm text-gray-600">Extra Person Charge</p>
-                    <p className="text-xl font-semibold text-green-600">₹{formData.pricing.extraPersonCharge}</p>
+                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                    <p className="text-sm text-purple-600">Extra Person Charge</p>
+                    <p className="text-xl font-semibold text-purple-700">₹{formData.pricing.extraPersonCharge}</p>
                   </div>
                 )}
               </div>
@@ -146,12 +183,12 @@ const ReviewSubmit = ({ formData }) => {
             {/* Amenities */}
             {formData.amenities && formData.amenities.length > 0 && (
               <div>
-                <h4 className="font-medium text-gray-900 mb-3">Amenities</h4>
+                <h4 className="font-medium text-gray-900 mb-3">Amenities ({formData.amenities.length})</h4>
                 <div className="flex flex-wrap gap-2">
                   {formData.amenities.map((amenity) => (
                     <span
                       key={amenity}
-                      className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm"
+                      className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-3 py-1 rounded-full text-sm font-medium shadow-sm"
                     >
                       {amenity}
                     </span>
@@ -161,17 +198,149 @@ const ReviewSubmit = ({ formData }) => {
             )}
           </div>
         </div>
+
+        {/* Pool Party Details - Only show if enabled */}
+        {formData.isPoolPartyAvailable && poolPartyData && (
+          <div className="bg-gradient-to-r from-cyan-50 to-blue-50 border border-cyan-200 rounded-lg p-6 shadow-sm">
+            <div className="flex items-center mb-4">
+              <div className="w-8 h-8 bg-cyan-100 rounded-full flex items-center justify-center mr-3">
+                <svg className="w-4 h-4 text-cyan-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.214.33-.403.713-.57 1.116-.334.804-.614 1.768-.84 2.734a31.365 31.365 0 00-.613 3.58 2.64 2.64 0 01-.945-1.067c-.328-.68-.398-1.534-.398-2.654A1 1 0 005.05 6.05 6.981 6.981 0 003 11a7 7 0 1011.95-4.95c-.592-.591-.98-.985-1.348-1.467-.363-.476-.724-1.063-1.207-2.03zM12.12 15.12A3 3 0 017 13s.879.5 2.5.5c0-1 .5-4 1.25-4.5.5 1 .786 1.293 1.371 1.879A2.99 2.99 0 0113 13a2.99 2.99 0 01-.879 2.121z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-cyan-900">Pool Party Details</h3>
+                <p className="text-sm text-cyan-600">Separate pool party configuration</p>
+              </div>
+            </div>
+            
+            <div className="space-y-6">
+              {/* Pool Party Capacity */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-white border border-cyan-200 rounded-lg p-4">
+                  <p className="text-sm text-cyan-600 font-medium">Pool Party Capacity</p>
+                  <p className="text-2xl font-bold text-cyan-700">{poolPartyData.totalCapacity || 'Not set'} persons</p>
+                  <p className="text-xs text-cyan-500 mt-1">Maximum capacity for pool party events</p>
+                </div>
+                
+                <div className="bg-white border border-cyan-200 rounded-lg p-4">
+                  <p className="text-sm text-cyan-600 font-medium">Status</p>
+                  <div className="flex items-center">
+                    <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
+                      <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                      Active
+                    </span>
+                  </div>
+                  <p className="text-xs text-cyan-500 mt-1">Pool party bookings are enabled</p>
+                </div>
+              </div>
+
+              {/* Pool Party Timings */}
+              <div>
+                <h4 className="font-medium text-cyan-900 mb-3">Session Timings</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {poolPartyData.timings.map((timing, index) => (
+                    <div key={index} className="bg-white border border-cyan-200 rounded-lg p-4 text-center">
+                      <p className="text-sm font-medium text-cyan-600 capitalize">{timing.session}</p>
+                      <div className="mt-2 space-y-1">
+                        <div className="flex items-center justify-center text-xs text-cyan-500">
+                          <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+                          </svg>
+                          Start: {formatTime(timing.startTime)}
+                        </div>
+                        <div className="flex items-center justify-center text-xs text-cyan-500">
+                          <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+                          </svg>
+                          End: {formatTime(timing.endTime)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Pool Party Pricing */}
+              <div>
+  <h4 className="font-medium text-cyan-900 mb-3">Pool Party Session Details</h4>
+  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    {poolPartyData.timings.map((timing, index) => (
+      <div key={index} className="bg-white border border-cyan-200 rounded-lg p-4">
+        <p className="text-sm font-medium text-cyan-600 capitalize">{timing.session}</p>
+        <div className="mt-2 space-y-1">
+          <div className="flex items-center text-xs text-cyan-500">
+            <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+            </svg>
+            Start: {formatTime(timing.startTime)}
+          </div>
+          <div className="flex items-center text-xs text-cyan-500">
+            <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+            </svg>
+            End: {formatTime(timing.endTime)}
+          </div>
+          <div className="flex items-center text-xs text-cyan-500">
+            <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+            </svg>
+            Capacity: {timing.capacity} persons
+          </div>
+          <div className="flex items-center text-xs text-cyan-500">
+            <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z" />
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clipRule="evenodd" />
+            </svg>
+            Adult: ₹{timing.pricing?.perAdult || '0'} | Kid: ₹{timing.pricing?.perKid || '0'}
+          </div>
+        </div>
+      </div>
+    ))}
+  </div>
+</div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Final Check */}
-      <div className="mt-6 bg-green-50 border border-green-200 rounded-lg p-4">
-        <div className="flex items-center">
-          <svg className="w-5 h-5 text-green-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-          </svg>
-          <p className="text-green-800 font-medium">
-            Please review all the information above. Click "Create Location" to proceed.
-          </p>
+      <div className="mt-8 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-6">
+        <div className="flex items-start">
+          <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center mr-4 flex-shrink-0">
+            <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-green-800 mb-2">Ready to Submit</h3>
+            <p className="text-green-700 mb-3">
+              Please review all the information above carefully. Once submitted, the location will be 
+              {formData.isPoolPartyAvailable ? ' available for both regular and pool party bookings.' : ' available for regular bookings.'}
+            </p>
+            <div className="space-y-2 text-sm text-green-600">
+              <div className="flex items-center">
+                <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                All basic information is complete
+              </div>
+              <div className="flex items-center">
+                <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                Location details are properly configured
+              </div>
+              <div className="flex items-center">
+                <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                {formData.isPoolPartyAvailable ? 'Pool party configuration is complete' : 'No pool party configuration needed'}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

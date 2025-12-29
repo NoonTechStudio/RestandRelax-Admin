@@ -20,7 +20,7 @@ export default function GetLocations() {
 
   const fetchLocations = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/locations`);
+      const res = await fetch(`${API_BASE_URL}/locations`);
       if (!res.ok) throw new Error("Failed to fetch locations");
       const data = await res.json();
       setLocations(data);

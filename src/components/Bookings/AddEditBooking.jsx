@@ -17,7 +17,8 @@ import {
   Wallet,
   AlertCircle,
   IndianRupee,
-  Lock
+  Lock,
+  Mail
 } from 'lucide-react';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import Toast from '../ui/Toast';
@@ -39,6 +40,7 @@ const AddEditBooking = () => {
     checkOutDate: '',
     name: '',
     phone: '',
+    email: '',
     address: '',
     adults: 1,
     kids: 0,
@@ -59,6 +61,7 @@ const AddEditBooking = () => {
   const [bookedDates, setBookedDates] = useState([]);
   const [locationsLoading, setLocationsLoading] = useState(false);
   const [calculatingPrice, setCalculatingPrice] = useState(false);
+  const [selectedLocationDetails, setSelectedLocationDetails] = useState(null);
 
   useEffect(() => {
     const initializeData = async () => {
@@ -74,17 +77,33 @@ const AddEditBooking = () => {
   }, [id]);
 
   useEffect(() => {
-    if (formData.locationId) {
+    if (formData.locationId && locations.length > 0) {
       fetchBookedDates(formData.locationId);
+      // Get location details for nightStay property
+      const location = locations.find(loc => loc._id === formData.locationId);
+      console.log('Setting selected location details:', location);
+      setSelectedLocationDetails(location);
     }
-  }, [formData.locationId]);
+  }, [formData.locationId, locations]);
 
   // Auto-calculate price when location, dates, or guests change (only for new bookings)
   useEffect(() => {
-    if (!isEditMode && formData.locationId && formData.checkInDate && formData.checkOutDate) {
+    console.log('🚀 Price calculation effect triggered:', {
+      isEditMode,
+      locationId: formData.locationId,
+      checkInDate: formData.checkInDate,
+      checkOutDate: formData.checkOutDate,
+      adults: formData.adults,
+      kids: formData.kids,
+      withFood: formData.withFood,
+      selectedLocationDetails: selectedLocationDetails
+    });
+    
+    if (!isEditMode && formData.locationId && formData.checkInDate && selectedLocationDetails) {
+      console.log('✅ Calling calculatePrice function');
       calculatePrice();
     }
-  }, [formData.locationId, formData.checkInDate, formData.checkOutDate, formData.adults, formData.kids, formData.withFood, isEditMode]);
+  }, [formData.locationId, formData.checkInDate, formData.checkOutDate, formData.adults, formData.kids, formData.withFood, isEditMode, selectedLocationDetails]);
 
   const fetchLocations = async () => {
     try {
@@ -105,6 +124,9 @@ const AddEditBooking = () => {
       } else if (result.data && Array.isArray(result.data)) {
         locationsData = result.data;
       }
+      
+      console.log('📋 Loaded locations:', locationsData);
+      console.log('📊 Sample location pricing:', locationsData[0]?.pricing);
       
       setLocations(locationsData);
       
@@ -136,12 +158,18 @@ const AddEditBooking = () => {
       // Handle location ID - it could be an object (populated) or string ID
       const locationId = booking.location?._id || booking.location;
       
+      // Get location details to check nightStay property
+      const locationRes = await fetch(`${API_BASE_URL}/locations/${locationId}`);
+      const locationData = await locationRes.json();
+      setSelectedLocationDetails(locationData);
+
       setFormData({
         locationId: locationId || '',
         checkInDate: booking.checkInDate ? new Date(booking.checkInDate).toISOString().split('T')[0] : '',
         checkOutDate: booking.checkOutDate ? new Date(booking.checkOutDate).toISOString().split('T')[0] : '',
         name: booking.name || '',
         phone: booking.phone || '',
+        email: booking.email || '', 
         address: booking.address || '',
         adults: booking.adults || 1,
         kids: booking.kids || 0,
@@ -230,26 +258,73 @@ const AddEditBooking = () => {
   };
 
   const calculatePrice = async () => {
-    if (!formData.locationId || !formData.checkInDate || !formData.checkOutDate) return;
+    if (!formData.locationId || !formData.checkInDate) {
+      console.log('❌ Cannot calculate price: missing locationId or checkInDate');
+      return;
+    }
 
     try {
       setCalculatingPrice(true);
       
+      console.log('🔍 Available locations:', locations);
+      console.log('🔍 Looking for location with ID:', formData.locationId);
+      
       const selectedLocation = locations.find(loc => loc._id === formData.locationId);
-      if (!selectedLocation) return;
+      
+      console.log('🎯 Selected location for pricing calculation:', selectedLocation);
+      
+      if (!selectedLocation) {
+        console.error('❌ Selected location not found in locations array');
+        return;
+      }
 
       const nights = calculateNights();
-      if (nights <= 0) return;
+      
+      console.log('📅 Nights calculation:', {
+        checkInDate: formData.checkInDate,
+        checkOutDate: formData.checkOutDate,
+        nights
+      });
+      
+      // For day picnic (nightStay: false), nights should be 0
+      const isDayPicnic = selectedLocation.propertyDetails?.nightStay === false;
+      const effectiveNights = isDayPicnic ? 0 : (nights > 0 ? nights : 1);
+      
+      // IMPORTANT: For day picnic, effectiveNights should be 1, not 0
+      // Day picnic is 1 day (same day checkout)
+      const finalNights = isDayPicnic ? 1 : effectiveNights;
 
-      // Calculate base price
+      console.log('🎪 Day picnic status:', {
+        isDayPicnic,
+        nightStay: selectedLocation.propertyDetails?.nightStay,
+        effectiveNights,
+        finalNights
+      });
+
+      // Calculate base price - IMPORTANT FIX HERE
       const pricePerAdult = selectedLocation.pricing?.pricePerAdult || 1000;
       const pricePerKid = selectedLocation.pricing?.pricePerKid || 500;
       
-      const adultPrice = pricePerAdult * formData.adults * nights;
-      const kidPrice = pricePerKid * formData.kids * nights;
-      //const foodCharge = formData.withFood ? (formData.adults + formData.kids) * 500 * nights : 0;
+      console.log('💰 Pricing values:', {
+        pricePerAdult,
+        pricePerKid,
+        adults: formData.adults,
+        kids: formData.kids,
+        finalNights
+      });
+
+      const adultPrice = pricePerAdult * formData.adults * finalNights;
+      const kidPrice = pricePerKid * formData.kids * finalNights;
       
-      const totalPrice = adultPrice + kidPrice ;
+      const totalPrice = adultPrice + kidPrice;
+
+      console.log('🧮 Price calculations:', {
+        adultPrice,
+        kidPrice,
+        totalPrice,
+        finalNights,
+        calculation: `(${pricePerAdult} × ${formData.adults} × ${finalNights}) + (${pricePerKid} × ${formData.kids} × ${finalNights}) = ${totalPrice}`
+      });
 
       // Auto-calculate remaining amount based on payment type
       let amountPaid = formData.amountPaid;
@@ -264,6 +339,12 @@ const AddEditBooking = () => {
         remainingAmount = totalPrice - amountPaid;
       }
 
+      console.log('💳 Payment calculations:', {
+        amountPaid,
+        remainingAmount,
+        paymentType: formData.paymentType
+      });
+
       setFormData(prev => ({
         ...prev,
         pricing: {
@@ -277,7 +358,7 @@ const AddEditBooking = () => {
       }));
 
     } catch (error) {
-      console.error('Error calculating price:', error);
+      console.error('❌ Error calculating price:', error);
     } finally {
       setCalculatingPrice(false);
     }
@@ -291,8 +372,10 @@ const AddEditBooking = () => {
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     
+    console.log('📝 Form field changed:', { name, value, type, checked });
+    
     // Only allow editing name, phone, and address in edit mode
-    if (isEditMode && !['name', 'phone', 'address'].includes(name)) {
+    if (isEditMode && !['name', 'phone', 'address', 'email'].includes(name)) {
       return;
     }
     
@@ -309,34 +392,51 @@ const AddEditBooking = () => {
       const newValue = type === 'checkbox' ? checked : 
                       type === 'number' ? parseInt(value) || 0 : value;
       
-      setFormData(prev => ({
-        ...prev,
+      const updatedFormData = {
+        ...formData,
         [name]: newValue
-      }));
+      };
+      
+      setFormData(updatedFormData);
 
       // Recalculate remaining amount when payment type changes (only for new bookings)
       if (!isEditMode && name === 'paymentType') {
         setTimeout(() => {
-          if (newValue === 'full') {
-            setFormData(prev => ({
-              ...prev,
-              amountPaid: prev.pricing.totalPrice,
-              remainingAmount: 0
-            }));
-          } else if (newValue === 'token' && prev.amountPaid === prev.pricing.totalPrice) {
-            // Set default token amount
-            const tokenAmount = Math.min(3000, prev.pricing.totalPrice);
-            setFormData(prev => ({
-              ...prev,
-              amountPaid: tokenAmount,
-              remainingAmount: prev.pricing.totalPrice - tokenAmount
-            }));
-          }
+          setFormData(prev => {
+            if (newValue === 'full') {
+              return {
+                ...prev,
+                amountPaid: prev.pricing.totalPrice,
+                remainingAmount: 0
+              };
+            } else if (newValue === 'token' && prev.amountPaid === prev.pricing.totalPrice) {
+              // Set default token amount
+              const tokenAmount = Math.min(3000, prev.pricing.totalPrice);
+              return {
+                ...prev,
+                amountPaid: tokenAmount,
+                remainingAmount: prev.pricing.totalPrice - tokenAmount
+              };
+            }
+            return prev;
+          });
         }, 0);
       }
 
-      // If check-in date changes and check-out date is before it, reset check-out date (only for new bookings)
-      if (!isEditMode && name === 'checkInDate' && formData.checkOutDate && value > formData.checkOutDate) {
+      // For day picnic: automatically set checkout to same as check-in
+      if (!isEditMode && name === 'checkInDate' && selectedLocationDetails?.propertyDetails?.nightStay === false) {
+        console.log('🔄 Setting checkout date to same as check-in for day picnic');
+        setFormData(prev => ({
+          ...prev,
+          checkOutDate: value
+        }));
+      }
+      
+      // For night stay: if check-in date changes and check-out date is before it, reset check-out date
+      if (!isEditMode && name === 'checkInDate' && 
+          formData.checkOutDate && value > formData.checkOutDate &&
+          selectedLocationDetails?.propertyDetails?.nightStay !== false) {
+        console.log('🔄 Resetting checkout date because check-in is after checkout');
         setFormData(prev => ({
           ...prev,
           checkOutDate: ''
@@ -375,13 +475,12 @@ const AddEditBooking = () => {
       return false;
     }
 
-    if (!formData.checkInDate || !formData.checkOutDate) {
-      showToast('Please select check-in and check-out dates', 'error');
+    if (!formData.checkInDate) {
+      showToast('Please select check-in date', 'error');
       return false;
     }
 
     const checkIn = new Date(formData.checkInDate);
-    const checkOut = new Date(formData.checkOutDate);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -390,16 +489,26 @@ const AddEditBooking = () => {
       return false;
     }
 
-    if (checkIn >= checkOut) {
-      showToast('Check-out date must be after check-in date', 'error');
-      return false;
-    }
+    // For night stay: validate check-out date
+    if (selectedLocationDetails?.propertyDetails?.nightStay !== false) {
+      if (!formData.checkOutDate) {
+        showToast('Please select check-out date', 'error');
+        return false;
+      }
 
-    // Check if any dates in the range are booked (only for new bookings)
-    // FIXED: Now properly includes check-out date in the range check
-    if (!isEditMode && isDateRangeBooked(formData.checkInDate, formData.checkOutDate)) {
-      showToast('Some selected dates are already booked. Please select different dates.', 'error');
-      return false;
+      const checkOut = new Date(formData.checkOutDate);
+      
+      if (checkIn >= checkOut) {
+        showToast('Check-out date must be after check-in date', 'error');
+        return false;
+      }
+
+      // Check if any dates in the range are booked (only for new bookings)
+      // FIXED: Now properly includes check-out date in the range check
+      if (!isEditMode && isDateRangeBooked(formData.checkInDate, formData.checkOutDate)) {
+        showToast('Some selected dates are already booked. Please select different dates.', 'error');
+        return false;
+      }
     }
 
     if (!formData.name.trim()) {
@@ -409,6 +518,18 @@ const AddEditBooking = () => {
 
     if (!formData.phone.trim()) {
       showToast('Phone number is required', 'error');
+      return false;
+    }
+
+    if (!formData.email.trim()) {
+      showToast('Email address is required for payment confirmation', 'error');
+      return false;
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      showToast('Please enter a valid email address', 'error');
       return false;
     }
 
@@ -454,11 +575,16 @@ const AddEditBooking = () => {
       const payload = isEditMode ? {
         name: formData.name,
         phone: formData.phone,
+        email: formData.email,
         address: formData.address
       } : {
         ...formData,
+        email: formData.email,
         checkInDate: new Date(formData.checkInDate).toISOString(),
-        checkOutDate: new Date(formData.checkOutDate).toISOString()
+        // For day picnic, checkOutDate is same as checkInDate
+        checkOutDate: selectedLocationDetails?.propertyDetails?.nightStay === false 
+          ? new Date(formData.checkInDate).toISOString()
+          : new Date(formData.checkOutDate).toISOString()
       };
 
       if (isEditMode) {
@@ -546,41 +672,50 @@ const AddEditBooking = () => {
   };
 
   const nights = calculateNights();
-  const isFormValid = formData.locationId && formData.checkInDate && formData.checkOutDate && 
+  const isFormValid = formData.locationId && formData.checkInDate && 
+                     ((selectedLocationDetails?.propertyDetails?.nightStay === false) || formData.checkOutDate) &&
                      formData.name && formData.phone && formData.address && 
                      formData.adults >= 1 && formData.pricing.totalPrice >= 0;
 
-  const PaymentBreakdown = () => (
-    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2">
-      <div className="flex justify-between items-center">
-        <span className="text-sm font-medium text-gray-700">Total Amount:</span>
-        <span className="text-lg font-bold text-gray-900">
-          ₹{formData.pricing.totalPrice.toLocaleString()}
-        </span>
+  const PaymentBreakdown = () => {
+    console.log('🧾 PaymentBreakdown rendering with:', {
+      totalPrice: formData.pricing.totalPrice,
+      amountPaid: formData.amountPaid,
+      remainingAmount: formData.remainingAmount
+    });
+    
+    return (
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2">
+        <div className="flex justify-between items-center">
+          <span className="text-sm font-medium text-gray-700">Total Amount:</span>
+          <span className="text-lg font-bold text-gray-900">
+            ₹{formData.pricing.totalPrice.toLocaleString()}
+          </span>
+        </div>
+        
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-gray-600">Amount Paid:</span>
+          <span className="font-medium text-green-600">₹{formData.amountPaid.toLocaleString()}</span>
+        </div>
+        
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-gray-600">Remaining Amount:</span>
+          <span className={`font-medium ${
+            formData.remainingAmount > 0 ? 'text-orange-600' : 'text-green-600'
+          }`}>
+            ₹{formData.remainingAmount.toLocaleString()}
+          </span>
+        </div>
+        
+        <div className="pt-2 border-t border-gray-200">
+          {getPaymentTypeBadge()}
+        </div>
       </div>
-      
-      <div className="flex justify-between items-center">
-        <span className="text-sm text-gray-600">Amount Paid:</span>
-        <span className="font-medium text-green-600">₹{formData.amountPaid.toLocaleString()}</span>
-      </div>
-      
-      <div className="flex justify-between items-center">
-        <span className="text-sm text-gray-600">Remaining Amount:</span>
-        <span className={`font-medium ${
-          formData.remainingAmount > 0 ? 'text-orange-600' : 'text-green-600'
-        }`}>
-          ₹{formData.remainingAmount.toLocaleString()}
-        </span>
-      </div>
-      
-      <div className="pt-2 border-t border-gray-200">
-        {getPaymentTypeBadge()}
-      </div>
-    </div>
-  );
+    );
+  };
 
   // Custom date input component with booked dates highlighted in green
-  const DateInput = ({ label, name, value, minDate, onChange, disabled = false }) => (
+  const DateInput = ({ label, name, value, minDate, onChange, disabled = false, showCheckoutText = false }) => (
     <div>
       <label className="block text-sm font-medium text-gray-700 mb-2">
         {label} *
@@ -594,7 +729,7 @@ const AddEditBooking = () => {
           onChange={onChange}
           required
           min={minDate}
-          disabled={disabled || isEditMode} // Disable in edit mode
+          disabled={disabled || isEditMode}
           className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
         />
       </div>
@@ -602,6 +737,11 @@ const AddEditBooking = () => {
         <p className="text-xs text-green-600 mt-1 flex items-center">
           <CheckCircle className="w-3 h-3 mr-1" />
           This date is booked
+        </p>
+      )}
+      {showCheckoutText && (
+        <p className="text-xs text-gray-500 mt-1">
+          Checkout: Same day ({value ? new Date(value).toLocaleDateString() : 'Select check-in date'})
         </p>
       )}
     </div>
@@ -741,28 +881,53 @@ const AddEditBooking = () => {
                       disabled={true}
                     />
 
-                    <DateInput
-                      label="Check-out Date"
-                      name="checkOutDate"
-                      value={formData.checkOutDate}
-                      minDate={getMinCheckoutDate()}
-                      onChange={handleChange}
-                      disabled={true}
-                    />
+                    {/* Show checkout input only for night stays, show text for day picnic */}
+                    {selectedLocationDetails?.propertyDetails?.nightStay !== false ? (
+                      <DateInput
+                        label="Check-out Date"
+                        name="checkOutDate"
+                        value={formData.checkOutDate}
+                        minDate={getMinCheckoutDate()}
+                        onChange={handleChange}
+                        disabled={true}
+                      />
+                    ) : (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Check-out Date
+                        </label>
+                        <div className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-gray-100">
+                          <div className="flex items-center">
+                            <Calendar className="w-5 h-5 text-gray-400 mr-2" />
+                            <span className="text-gray-700">
+                              Same day: {formData.checkInDate ? new Date(formData.checkInDate).toLocaleDateString() : 'Select check-in date'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Day picnic - Checkout on same day
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
-                  {nights > 0 && (
+                  {nights > 0 || selectedLocationDetails?.propertyDetails?.nightStay === false ? (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                       <p className="text-sm text-blue-800">
-                        <strong>Duration:</strong> {nights} night{nights !== 1 ? 's' : ''}
-                        {formData.checkInDate && formData.checkOutDate && (
+                        <strong>Duration:</strong> {selectedLocationDetails?.propertyDetails?.nightStay === false ? 'Day picnic (same day)' : `${nights} night${nights !== 1 ? 's' : ''}`}
+                        {formData.checkInDate && formData.checkOutDate && selectedLocationDetails?.propertyDetails?.nightStay !== false && (
                           <span className="ml-2">
                             ({new Date(formData.checkInDate).toLocaleDateString()} to {new Date(formData.checkOutDate).toLocaleDateString()})
                           </span>
                         )}
+                        {selectedLocationDetails?.propertyDetails?.nightStay === false && formData.checkInDate && (
+                          <span className="ml-2">
+                            ({new Date(formData.checkInDate).toLocaleDateString()})
+                          </span>
+                        )}
                       </p>
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </LockedSection>
             ) : (
@@ -795,6 +960,7 @@ const AddEditBooking = () => {
                           {locations.map(location => (
                             <option key={location._id} value={location._id}>
                               {location.name} - {location.address?.city || location.city || 'Unknown City'}
+                              {location.propertyDetails?.nightStay === false ? ' (Day Picnic)' : ' (Night Stay)'}
                             </option>
                           ))}
                         </select>
@@ -816,22 +982,47 @@ const AddEditBooking = () => {
                       onChange={handleChange}
                     />
 
-                    <DateInput
-                      label="Check-out Date"
-                      name="checkOutDate"
-                      value={formData.checkOutDate}
-                      minDate={getMinCheckoutDate()}
-                      onChange={handleChange}
-                    />
+                    {/* Show checkout input only for night stays, show text for day picnic */}
+                    {selectedLocationDetails?.propertyDetails?.nightStay !== false ? (
+                      <DateInput
+                        label="Check-out Date"
+                        name="checkOutDate"
+                        value={formData.checkOutDate}
+                        minDate={getMinCheckoutDate()}
+                        onChange={handleChange}
+                      />
+                    ) : (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Check-out Date
+                        </label>
+                        <div className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-gray-50">
+                          <div className="flex items-center">
+                            <Calendar className="w-5 h-5 text-gray-400 mr-2" />
+                            <span className="text-gray-700">
+                              Same day: {formData.checkInDate ? new Date(formData.checkInDate).toLocaleDateString() : 'Select check-in date'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Day picnic - Checkout on same day
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
-                  {nights > 0 && (
+                  {(nights > 0 || selectedLocationDetails?.propertyDetails?.nightStay === false) && (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                       <p className="text-sm text-blue-800">
-                        <strong>Duration:</strong> {nights} night{nights !== 1 ? 's' : ''}
-                        {formData.checkInDate && formData.checkOutDate && (
+                        <strong>Duration:</strong> {selectedLocationDetails?.propertyDetails?.nightStay === false ? 'Day picnic (same day)' : `${nights} night${nights !== 1 ? 's' : ''}`}
+                        {formData.checkInDate && formData.checkOutDate && selectedLocationDetails?.propertyDetails?.nightStay !== false && (
                           <span className="ml-2">
                             ({new Date(formData.checkInDate).toLocaleDateString()} to {new Date(formData.checkOutDate).toLocaleDateString()})
+                          </span>
+                        )}
+                        {selectedLocationDetails?.propertyDetails?.nightStay === false && formData.checkInDate && (
+                          <span className="ml-2">
+                            ({new Date(formData.checkInDate).toLocaleDateString()})
                           </span>
                         )}
                       </p>
@@ -897,6 +1088,26 @@ const AddEditBooking = () => {
                       placeholder="Enter phone number"
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Email Address
+                  </label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <input
+                      type="email"
+                      name="email"
+                      value={formData.email}
+                      onChange={handleChange}
+                      className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                      placeholder="Enter email address"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Confirmation PDF will be sent to this email
+                  </p>
                 </div>
 
                 <div>

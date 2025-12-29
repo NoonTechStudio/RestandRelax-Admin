@@ -3,11 +3,17 @@ import Locations from "./Locations";
 import LocationForm from "./LocationForm";
 import Review from "./Reviews";
 import Memories from "./Memories";
+import GetPoolParties from "./GetPoolParties";
+import GetPoolPartyBookings from "./GetPoolPartyBookings";
+import AddEditPoolPartyBooking from "./AddEditPoolPartyBooking";
 
 export {
     Dashboard,
     Locations,
     LocationForm,
     Review,
-    Memories
+    Memories,
+    GetPoolParties,
+    GetPoolPartyBookings,
+    AddEditPoolPartyBooking
 };

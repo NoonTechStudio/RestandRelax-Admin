@@ -1,25 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Eye, EyeOff, LogIn, Lock, Shield, CheckCircle, Users, AlertTriangle, Key } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Eye, EyeOff, LogIn, Building, Shield, CheckCircle, Users, CreditCard, Phone } from 'lucide-react';
+import { useCaretakerAuth } from '../../context/CaretakerAuthContext';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import Toast from '../../components/ui/Toast';
 
-const Login = () => {
+const CaretakerLogin = () => {
   const [formData, setFormData] = useState({
     email: '',
-    password: '',
+    password: ''
   });
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
-  const [loginAttempts, setLoginAttempts] = useState(0);
+  const [loading, setLoading] = useState(false);
 
-  const { login, isAuthenticated } = useAuth();
+  const { login, isAuthenticated } = useCaretakerAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = location.state?.from?.pathname || '/';
+  const from = location.state?.from?.pathname || '/caretaker/dashboard';
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -27,15 +26,10 @@ const Login = () => {
     }
   }, [isAuthenticated, navigate, from]);
 
-  const showToast = (message, type = 'success') => {
-    setToast({ show: true, message, type });
-    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 5000);
-  };
-
   const handleChange = (e) => {
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value,
+      [e.target.name]: e.target.value
     });
   };
 
@@ -47,35 +41,35 @@ const Login = () => {
 
     if (result.success) {
       showToast('Login successful!', 'success');
-      setTimeout(() => {
-        navigate(from, { replace: true });
-      }, 1000);
+      // Navigation will be handled by the useEffect
     } else {
-      setLoginAttempts(prev => prev + 1);
       showToast(result.error, 'error');
     }
-
+    
     setLoading(false);
   };
 
-  const isFormValid = formData.email && formData.password;
+  const showToast = (message, type = 'success') => {
+    setToast({ show: true, message, type });
+    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 5000);
+  };
 
   const features = [
     {
+      icon: <Building className="w-5 h-5" />,
+      text: "View and manage bookings for assigned locations"
+    },
+    {
+      icon: <CreditCard className="w-5 h-5" />,
+      text: "Update payment status from 'Half Paid' to 'Fully Paid'"
+    },
+    {
       icon: <Shield className="w-5 h-5" />,
-      text: "Full administrative access to all system features"
+      text: "Secure access with administrator approval"
     },
     {
       icon: <Users className="w-5 h-5" />,
-      text: "Manage user accounts and permissions"
-    },
-    {
-      icon: <Key className="w-5 h-5" />,
-      text: "Complete booking and payment management"
-    },
-    {
-      icon: <AlertTriangle className="w-5 h-5" />,
-      text: "System monitoring and reporting capabilities"
+      text: "Contact resort administration for account issues"
     }
   ];
 
@@ -97,22 +91,22 @@ const Login = () => {
             <div className="text-center lg:text-left mb-12">
               <div className="flex items-center justify-center lg:justify-start space-x-3 mb-6">
                 <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm">
-                  <Shield className="w-6 h-6 text-white" />
+                  <Building className="w-6 h-6 text-white" />
                 </div>
-                <span className="text-xl font-bold">Rest And Relax</span>
+                <span className="text-xl font-bold">ResortCare</span>
               </div>
               <h1 className="text-4xl font-bold mb-4">
-                Admin <span className="text-blue-200">Portal</span>
+                Caretaker <span className="text-blue-200">Portal</span>
               </h1>
               <p className="text-lg text-blue-100 opacity-90">
-                Complete administrative access to manage the entire resort system
+                Secure access to manage your assigned location bookings and payments
               </p>
             </div>
 
             {/* Features List */}
             <div className="space-y-6 mb-12">
               <h2 className="text-2xl font-semibold text-blue-100 mb-6">
-                Administrative Access:
+                What you can do:
               </h2>
               <div className="space-y-4">
                 {features.map((feature, index) => (
@@ -128,15 +122,15 @@ const Login = () => {
               </div>
             </div>
 
-            {/* Security Info */}
+            {/* Support Info */}
             <div className="bg-white/10 rounded-2xl p-6 backdrop-blur-sm">
               <div className="flex items-center space-x-2 mb-3">
-                <AlertTriangle className="w-5 h-5 text-blue-200" />
-                <h3 className="text-lg font-semibold text-white">Security Notice</h3>
+                <Phone className="w-5 h-5 text-blue-200" />
+                <h3 className="text-lg font-semibold text-white">Need Help?</h3>
               </div>
               <p className="text-blue-100 text-sm">
-                This panel is restricted to authorized administrative personnel only. 
-                Unauthorized access attempts will be logged and may result in legal action.
+                Contact the resort administration team for any account issues, 
+                location assignments, or technical support.
               </p>
             </div>
           </div>
@@ -149,15 +143,15 @@ const Login = () => {
             <div className="lg:hidden text-center mb-8">
               <div className="flex items-center justify-center space-x-3 mb-4">
                 <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center">
-                  <Shield className="w-6 h-6 text-white" />
+                  <Building className="w-6 h-6 text-white" />
                 </div>
                 <span className="text-xl font-bold text-gray-900">ResortCare</span>
               </div>
               <h2 className="text-3xl font-bold text-gray-900">
-                Admin Login
+                Caretaker Login
               </h2>
               <p className="mt-2 text-gray-600">
-                Sign in to your admin account
+                Access your assigned location bookings
               </p>
             </div>
 
@@ -166,10 +160,10 @@ const Login = () => {
               {/* Desktop Form Header */}
               <div className="hidden lg:block text-center mb-8">
                 <h2 className="text-2xl font-bold text-gray-900">
-                  Sign in to Admin Portal
+                  Sign in to your account
                 </h2>
                 <p className="mt-2 text-sm text-gray-600">
-                  Enter your administrative credentials
+                  Enter your credentials to access the caretaker portal
                 </p>
               </div>
 
@@ -223,43 +217,34 @@ const Login = () => {
                   </div>
                 </div>
 
-                {loginAttempts >= 3 && (
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-                    <div className="flex items-center space-x-2">
-                      <AlertTriangle className="w-4 h-4 text-yellow-600" />
-                      <p className="text-sm text-yellow-800">
-                        Having trouble logging in? Contact super admin for assistance.
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={!isFormValid || loading}
-                  className="w-full flex justify-center items-center py-4 px-4 border border-transparent rounded-xl shadow-sm text-lg font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
-                >
-                  {loading ? (
-                    <LoadingSpinner size="sm" className="mr-3" />
-                  ) : (
-                    <LogIn className="w-5 h-5 mr-3" />
-                  )}
-                  {loading ? 'Signing in...' : 'Sign In as Admin'}
-                </button>
+                <div>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full flex justify-center items-center py-4 px-4 border border-transparent rounded-xl shadow-sm text-lg font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+                  >
+                    {loading ? (
+                      <LoadingSpinner size="sm" className="mr-3" />
+                    ) : (
+                      <LogIn className="w-5 h-5 mr-3" />
+                    )}
+                    {loading ? 'Signing in...' : 'Sign in as Caretaker'}
+                  </button>
+                </div>
               </form>
 
-              {/* Security Notice */}
+              {/* Access Notice */}
               <div className="mt-8 pt-6 border-t border-gray-200">
-                <div className="flex items-center justify-center text-sm text-gray-500 mb-4">
+                <div className="flex items-center justify-center text-sm text-gray-500">
                   <Shield className="w-4 h-4 mr-2" />
-                  Administrative Access Only • Authorized Personnel
+                  Caretaker Access Only • Authorized Personnel
                 </div>
                 
-                {/* Caretaker Login Link */}
-                <div className="text-center">
+                {/* Admin Login Link */}
+                <div className="text-center mt-4">
                   <p className="text-sm text-gray-600">
-                    Caretaker Login: <strong>
-                      <a href='/caretaker/login' className="text-blue-600 hover:text-blue-700 underline transition-colors">
+                    Admin Login: <strong>
+                      <a href='/login' className="text-blue-600 hover:text-blue-700 underline transition-colors">
                         Click Here!
                       </a>
                     </strong>
@@ -268,16 +253,26 @@ const Login = () => {
               </div>
             </div>
 
-            {/* Mobile Security Notice */}
-            <div className="lg:hidden mt-8 bg-gray-50 border border-gray-200 rounded-2xl p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                <AlertTriangle className="w-5 h-5 mr-2 text-yellow-500" />
-                Security Notice
+            {/* Mobile Information Card */}
+            <div className="lg:hidden mt-8 bg-blue-50 border border-blue-200 rounded-2xl p-6">
+              <h3 className="text-lg font-semibold text-blue-900 mb-4 flex items-center">
+                <Building className="w-5 h-5 mr-2" />
+                About Caretaker Accounts
               </h3>
-              <p className="text-sm text-gray-700">
-                This panel is restricted to authorized administrative personnel only. 
-                Unauthorized access attempts will be logged and may result in legal action.
-              </p>
+              <div className="space-y-3 text-sm text-blue-800">
+                <div className="flex items-start space-x-2">
+                  <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                  <span>Caretakers can only view and manage bookings for their assigned locations</span>
+                </div>
+                <div className="flex items-start space-x-2">
+                  <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                  <span>You can update payment status from "Half Paid" to "Fully Paid" only</span>
+                </div>
+                <div className="flex items-start space-x-2">
+                  <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                  <span>Your account will need to be approved by an administrator</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -286,4 +281,4 @@ const Login = () => {
   );
 };
 
-export default Login;
+export default CaretakerLogin;

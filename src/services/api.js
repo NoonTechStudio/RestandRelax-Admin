@@ -10,7 +10,7 @@ const getBaseURL = () => {
   }
   
   // Otherwise, append /api
-  return envURL ? `${envURL}/api` : 'http://localhost:5000/api';
+  return envURL ? `${envURL}/api` : 'http://localhost:5001/api';
 };
 
 const API_BASE_URL = getBaseURL();
