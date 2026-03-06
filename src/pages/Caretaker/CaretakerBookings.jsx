@@ -17,7 +17,7 @@ const CaretakerBookings = () => {
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [actionLoading, setActionLoading] = useState(null);
   const [selectedLocation, setSelectedLocation] = useState('all');
-  const [bookingTypeFilter, setBookingTypeFilter] = useState('all'); // NEW: Filter by booking type
+  const [bookingTypeFilter, setBookingTypeFilter] = useState('all');
 
   const { caretaker, isAuthenticated } = useCaretakerAuth();
   const API_BASE_URL = import.meta.env.VITE_API_CONNECTION_HOST;
@@ -97,7 +97,13 @@ const CaretakerBookings = () => {
                 remainingAmount: 0,
                 amountPaid: isPoolParty 
                   ? booking.pricing?.totalPrice || booking.totalAmount || 0
-                  : booking.pricing?.totalPrice || booking.totalAmount || 0
+                  : booking.pricing?.totalPrice || booking.totalAmount || 0,
+                markedPaidBy: {
+                  _id: caretaker?._id,
+                  name: caretaker?.name,
+                  email: caretaker?.email
+                },
+                markedPaidAt: new Date().toISOString()
               };
             }
             return booking;
@@ -144,27 +150,29 @@ const CaretakerBookings = () => {
     
     if (dateFilter !== 'all' && dateToCheck) {
       const today = new Date();
-      today.setHours(0, 0, 0, 0);
       const checkDate = new Date(dateToCheck);
-      checkDate.setHours(0, 0, 0, 0);
+      // Convert both to UTC midnight for comparison
+      const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+      const checkDateUTC = Date.UTC(checkDate.getUTCFullYear(), checkDate.getUTCMonth(), checkDate.getUTCDate());
       
       switch (dateFilter) {
         case 'today':
-          matchesDate = checkDate.getTime() === today.getTime();
+          matchesDate = checkDateUTC === todayUTC;
           break;
         case 'upcoming':
-          matchesDate = checkDate > today;
+          matchesDate = checkDateUTC > todayUTC;
           break;
         case 'past':
-          matchesDate = checkDate < today;
+          matchesDate = checkDateUTC < todayUTC;
           break;
-        case 'thisWeek':
-          const startOfWeek = new Date(today);
-          startOfWeek.setDate(today.getDate() - today.getDay());
+        case 'thisWeek': {
+          const startOfWeek = new Date(todayUTC);
+          startOfWeek.setUTCDate(startOfWeek.getUTCDate() - startOfWeek.getUTCDay());
           const endOfWeek = new Date(startOfWeek);
-          endOfWeek.setDate(startOfWeek.getDate() + 6);
-          matchesDate = checkDate >= startOfWeek && checkDate <= endOfWeek;
+          endOfWeek.setUTCDate(startOfWeek.getUTCDate() + 6);
+          matchesDate = checkDateUTC >= startOfWeek.getTime() && checkDateUTC <= endOfWeek.getTime();
           break;
+        }
         default:
           matchesDate = true;
       }
@@ -236,12 +244,15 @@ const CaretakerBookings = () => {
     );
   };
 
+  // ✅ FIXED: Use UTC to avoid timezone shift
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString('en-US', {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
-      day: 'numeric'
+      day: 'numeric',
+      timeZone: 'UTC'  // 👈 forces the date part to be interpreted as UTC
     });
   };
 
@@ -254,14 +265,18 @@ const CaretakerBookings = () => {
     }).format(amount || 0);
   };
 
+  // ✅ FIXED: Use UTC for day difference calculation
   const getDaysUntilCheckIn = (checkInDate) => {
     if (!checkInDate) return 'N/A';
     
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
     const checkIn = new Date(checkInDate);
-    checkIn.setHours(0, 0, 0, 0);
-    const diffTime = checkIn - today;
+
+    // Set both to UTC midnight
+    const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+    const checkInUTC = Date.UTC(checkIn.getUTCFullYear(), checkIn.getUTCMonth(), checkIn.getUTCDate());
+
+    const diffTime = checkInUTC - todayUTC;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
     if (diffDays === 0) return 'Today';
@@ -330,11 +345,17 @@ const CaretakerBookings = () => {
     );
   };
 
+  // ✅ FIXED: Use UTC dates for duration calculation
   const getDuration = (checkInDate, checkOutDate, bookingType) => {
     if (bookingType === 'poolparty') return 'Single Session';
     
     if (!checkInDate || !checkOutDate) return 'N/A';
-    const diffTime = new Date(checkOutDate) - new Date(checkInDate);
+    const checkIn = new Date(checkInDate);
+    const checkOut = new Date(checkOutDate);
+    // Use UTC dates to avoid timezone influence on the difference
+    const checkInUTC = Date.UTC(checkIn.getUTCFullYear(), checkIn.getUTCMonth(), checkIn.getUTCDate());
+    const checkOutUTC = Date.UTC(checkOut.getUTCFullYear(), checkOut.getUTCMonth(), checkOut.getUTCDate());
+    const diffTime = checkOutUTC - checkInUTC;
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + ' nights';
   };
 
@@ -532,6 +553,9 @@ const CaretakerBookings = () => {
                   Status & Type
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Processed By
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
@@ -539,7 +563,7 @@ const CaretakerBookings = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredBookings.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="px-6 py-12 text-center">
+                  <td colSpan="7" className="px-6 py-12 text-center">
                     <div className="text-gray-500">
                       <Calendar className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                       <p className="text-lg font-medium">No bookings found</p>
@@ -643,12 +667,26 @@ const CaretakerBookings = () => {
                           {booking.paymentType && getPaymentTypeBadge(booking.paymentType)}
                         </div>
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {booking.markedPaidBy ? (
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">
+                              {booking.markedPaidBy.name}
+                            </div>
+                            {booking.markedPaidAt && (
+                              <div className="text-xs text-gray-500">
+                                {new Date(booking.markedPaidAt).toLocaleDateString()}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-sm text-gray-400">—</span>
+                        )}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex items-center space-x-2">
-                          {/* Update Payment Status Button */}
                           {(booking.paymentStatus === 'half-paid' || 
                             booking.paymentStatus === 'partially_paid' ||
-                            (booking.paymentDetails?.status === 'partially_paid') ||
                             (booking.paymentStatus === 'pending' && booking.amountPaid > 0)) && (
                             <button
                               onClick={() => updatePaymentStatus(

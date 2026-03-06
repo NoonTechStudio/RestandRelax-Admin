@@ -6,6 +6,8 @@ import Memories from "./Memories";
 import GetPoolParties from "./GetPoolParties";
 import GetPoolPartyBookings from "./GetPoolPartyBookings";
 import AddEditPoolPartyBooking from "./AddEditPoolPartyBooking";
+import AdminBookingModal from "./AdminBookingModal";
+import AdminCreatePoolPartyBookingPage from "./AdminCreatePoolPartyBookingPage";
 
 export {
     Dashboard,
@@ -15,5 +17,7 @@ export {
     Memories,
     GetPoolParties,
     GetPoolPartyBookings,
-    AddEditPoolPartyBooking
+    AddEditPoolPartyBooking,
+    AdminBookingModal,
+    AdminCreatePoolPartyBookingPage
 };

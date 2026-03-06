@@ -20,3 +20,13 @@ export const deletePoolParty = async (locationId) => {
   const response = await api.delete(`/pool-parties/${locationId}`);
   return response.data;
 };
+
+export const getSharedPoolParties = async () => {
+  const response = await api.get('/locations/shared-pool-parties');
+  return response.data;
+};
+
+export const getPoolParties = async () => {
+  const response = await api.get('/pool-parties/');
+  return response.data;
+};

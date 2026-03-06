@@ -161,4 +161,4 @@ const PropertyFeatures = ({ formData, setFormData }) => {
   );
 };
 
-export default PropertyFeatures;
+export default React.memo(PropertyFeatures);

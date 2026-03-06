@@ -1,1341 +1,895 @@
-// components/Admin/AddEditPoolPartyBooking.jsx
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { 
-  ArrowLeft, AlertCircle, CheckCircle, Calendar, Clock, Users,
-  Mail, Phone, User, Tag, Loader2, MapPin, XCircle, CreditCard, Wallet,
-  Info, Lock, X, IndianRupee, Eye, Utensils, Home, ShieldCheck
+// AdminEditPoolPartyBookingPage.jsx – Fixed food package selection
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import toast from 'react-hot-toast';
+import {
+  Calendar, User, Phone, Mail, Home, Clock, Utensils, CreditCard,
+  CheckCircle, AlertCircle, Users, Loader2, ChevronDown, ArrowLeft, Shield, Download
 } from 'lucide-react';
-import axios from 'axios';
 
-const InlineToast = ({ message, type = 'success', onClose }) => {
-  const icons = {
-    success: CheckCircle,
-    error: XCircle,
-    warning: AlertCircle,
-    info: Info,
-  };
+// ----------------------------------------------------------------------
+// Helper: get YYYY‑MM‑DD in local time (prevents timezone shift)
+const toDateString = (isoString) => isoString.split('T')[0];
 
-  const styles = {
-    success: 'bg-green-50 border-green-200 text-green-800',
-    error: 'bg-red-50 border-red-200 text-red-800',
-    warning: 'bg-yellow-50 border-yellow-200 text-yellow-800',
-    info: 'bg-blue-50 border-blue-200 text-blue-800',
-  };
+// Helper: create UTC Date object from YYYY‑MM‑DD (for calculations)
+const utcDate = (dateStr) => new Date(dateStr + 'T00:00:00Z');
 
-  const Icon = icons[type] || CheckCircle;
-
-  return (
-    <div className={`fixed top-4 right-4 z-50 flex items-center p-4 border rounded-lg shadow-lg max-w-sm ${styles[type] || styles.success}`}>
-      <Icon className="w-5 h-5 mr-2 shrink-0" />
-      <span className="flex-1 text-sm font-medium">{message}</span>
-      <button
-        onClick={onClose}
-        className="ml-2 p-1 hover:bg-black hover:bg-opacity-10 rounded transition-colors"
-      >
-        <X className="w-4 h-4" />
-      </button>
-    </div>
-  );
+// Helper: format date for display (uses UTC to preserve day)
+const formatDate = (dateStr) => {
+  if (!dateStr) return '';
+  const d = utcDate(dateStr);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 };
 
-// Locked Section Component for Edit Mode
-const LockedSection = ({ title, icon: Icon, children, note = "Locked in edit mode" }) => (
-  <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 opacity-75">
-    <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-      <Icon className="w-5 h-5 mr-2 text-gray-400" />
-      {title}
-      <Lock className="w-4 h-4 ml-2 text-gray-400" />
-      {note && (
-        <span className="ml-2 text-sm font-normal text-gray-500 italic">
-          ({note})
-        </span>
-      )}
-    </h2>
-    <div className="space-y-4 opacity-60">
-      {children}
-    </div>
-  </div>
-);
-
-const AddEditPoolPartyBooking = () => {
-  const { id } = useParams();
+// ----------------------------------------------------------------------
+// Main component
+const AdminEditPoolPartyBookingPage = () => {
+  const { id } = useParams(); // booking ID
   const navigate = useNavigate();
-  const isEditMode = Boolean(id);
+  const API_BASE_URL = import.meta.env.VITE_API_CONNECTION_HOST;
+  const RAZORPAY_KEY_ID = import.meta.env.VITE_RAZORPAY_KEY_ID;
+
+  // ---------- State ----------
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [locations, setLocations] = useState([]);
-  const [sessions, setSessions] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [booking, setBooking] = useState(null);
   const [poolPartyData, setPoolPartyData] = useState(null);
-  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
-  const [showDebug, setShowDebug] = useState(false);
-  
-  // New state for payment options
-  const [paymentType, setPaymentType] = useState('token'); // 'token' or 'full'
-  const [tokenAmount, setTokenAmount] = useState(2000); // Default token amount
-  
+  const [locationDetails, setLocationDetails] = useState(null);
+  const [sessionsAvailability, setSessionsAvailability] = useState([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState('');
+
+  // Form fields
   const [formData, setFormData] = useState({
-    locationId: '',
-    guestName: '',
-    email: '',
+    name: '',
     phone: '',
+    email: '',
     address: '',
-    bookingDate: new Date().toISOString().split('T')[0],
+    bookingDate: '',
     session: '',
     adults: 1,
     kids: 0,
-    totalGuests: 1,
-    status: 'confirmed',
-    paymentType: 'token',
-    amountPaid: 0,
-    remainingAmount: 0,
-    pricing: {
-      pricePerAdult: 0,
-      pricePerKid: 0,
-      totalPrice: 0
-    }
+    withFood: false,
+    foodPackage: '', // will hold the unique _id of the selected package
   });
 
-  const API_BASE_URL = import.meta.env.VITE_API_CONNECTION_HOST;
+  // Offer
+  const [activeOffer, setActiveOffer] = useState(null);
+  const [offerLoading, setOfferLoading] = useState(false);
 
-  const getToken = () => {
-    return localStorage.getItem('adminToken') || localStorage.getItem('token');
-  };
+  // Payment
+  const [paymentType, setPaymentType] = useState('token'); // 'full' or 'token'
+  const [manualAmountPaid, setManualAmountPaid] = useState('');
+  const [updateResult, setUpdateResult] = useState(null);
+  const [step, setStep] = useState('booking'); // 'booking' | 'confirmation'
 
-  const showToast = (message, type = 'success') => {
-    setToast({ show: true, message, type });
-    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 5000);
-  };
+  // ---------- Derived values ----------
+  const totalGuests = formData.adults + formData.kids;
 
-  // Fetch pool party data for location
-  const fetchPoolPartyForLocation = async (locationId) => {
-    if (!locationId) return null;
-    
-    try {
-      const token = getToken();
-      const response = await axios.get(
-        `${API_BASE_URL}/pool-parties/location/${locationId}`,
-        {
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
+  const selectedSession = useMemo(() => 
+    sessionsAvailability.find(s => s.session === formData.session),
+    [sessionsAvailability, formData.session]
+  );
+
+  const isSessionAvailable = useMemo(() => 
+    selectedSession?.isAvailable && selectedSession.availableCapacity >= totalGuests,
+    [selectedSession, totalGuests]
+  );
+
+  // Offer and pricing helpers
+  const getSessionPricing = useCallback((sessionName) => {
+    if (activeOffer && activeOffer.poolPartyPricing?.sessions) {
+      const offerSession = activeOffer.poolPartyPricing.sessions.find(
+        s => s.session === sessionName && s.poolPartyId === poolPartyData?._id
       );
-      
-      if (response.data._id) {
-        setPoolPartyData(response.data);
-        return response.data;
+      if (offerSession) {
+        return {
+          perAdult: offerSession.perAdult,
+          perKid: offerSession.perKid
+        };
       }
-      return null;
-    } catch (error) {
-      console.error('Error fetching pool party:', error);
-      if (error.response?.status === 404) {
-        showToast('Pool party configuration not found for this location. Please create pool party first.', 'error');
-      }
-      setPoolPartyData(null);
-      return null;
     }
-  };
+    const originalSession = sessionsAvailability.find(s => s.session === sessionName);
+    return originalSession?.pricing || { perAdult: 0, perKid: 0 };
+  }, [activeOffer, poolPartyData, sessionsAvailability]);
 
-  // Initialize form if editing
+  const getFoodPackages = useCallback(() => {
+    if (activeOffer && activeOffer.poolPartyPricing?.foodPackages) {
+      return activeOffer.poolPartyPricing.foodPackages.filter(
+        fp => fp.poolPartyId === poolPartyData?._id
+      );
+    }
+    return poolPartyData?.selectedFoodPackages || [];
+  }, [activeOffer, poolPartyData]);
+
+  const foodPackages = getFoodPackages();
+
+  // Price calculations – use the package's unique _id for selection
+  const calculateTotalPrice = useCallback(() => {
+    if (!poolPartyData || !formData.session) return 0;
+    const pricing = getSessionPricing(formData.session);
+    const adultPrice = pricing.perAdult * formData.adults;
+    const kidPrice = pricing.perKid * formData.kids;
+    let foodPrice = 0;
+    if (formData.withFood && formData.foodPackage) {
+      const selectedFoodPkg = foodPackages.find(
+        pkg => String(pkg._id) === formData.foodPackage
+      );
+      if (selectedFoodPkg) {
+        foodPrice = selectedFoodPkg.pricePerAdult * formData.adults + selectedFoodPkg.pricePerKid * formData.kids;
+      }
+    }
+    return adultPrice + kidPrice + foodPrice;
+  }, [poolPartyData, formData, getSessionPricing, foodPackages]);
+
+  const totalPrice = useMemo(() => calculateTotalPrice(), [calculateTotalPrice]);
+  const tokenAmount = useMemo(() => totalPrice * 0.5, [totalPrice]);
+  const remainingAmount = useMemo(() => totalPrice - (parseFloat(manualAmountPaid) || 0), [totalPrice, manualAmountPaid]);
+
+  // Update manualAmountPaid only when paymentType changes (preserve existing paid amount during edits)
   useEffect(() => {
-    const initializeData = async () => {
+    if (paymentType === 'full') {
+      setManualAmountPaid(totalPrice.toString());
+    } else {
+      setManualAmountPaid(tokenAmount.toString());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentType]);
+
+  // --------------------------------------------------------------------
+  // Fetch booking details
+  useEffect(() => {
+    const fetchBooking = async () => {
       try {
         setLoading(true);
-        await fetchLocations();
-        
-        if (id) {
-          await fetchBookingById(id);
-        } else {
-          // For new bookings, set default payment values
-          calculateRemainingAmount();
+        const res = await fetch(`${API_BASE_URL}/pool-parties/bookings/${id}`);
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Booking not found');
+        const b = data.booking;
+
+        setBooking(b);
+
+        // Fetch pool party details
+        const poolPartyId = b.poolPartyId?._id || b.poolPartyId;
+        if (poolPartyId) {
+          const ppRes = await fetch(`${API_BASE_URL}/pool-parties/${poolPartyId}`);
+          const ppData = await ppRes.json();
+          if (ppData.success) {
+            setPoolPartyData(ppData.poolParty);
+          } else {
+            toast.error('Failed to load pool party details');
+          }
+
+          // Fetch location details (for display)
+          const locationId = b.locationId?._id || b.locationId;
+          if (locationId) {
+            const locRes = await fetch(`${API_BASE_URL}/locations/${locationId}`);
+            const locData = await locRes.json();
+            setLocationDetails(locData);
+            // After setting locationDetails, fetch availability using its _id
+            const dateStr = toDateString(b.bookingDate);
+            setFormData(prev => ({ ...prev, bookingDate: dateStr }));
+            if (locData._id && dateStr) {
+              await fetchSessionsAvailability(locData._id, dateStr, b.session);
+            }
+          } else {
+            setAvailabilityError('Location ID not found in booking');
+          }
         }
-      } catch (error) {
-        console.error('Initialization error:', error);
-        showToast('Failed to load page data', 'error');
+
+        // Populate form – determine the initially selected food package by its unique _id
+        // We'll set this after poolPartyData is loaded (in a separate effect)
+        setFormData(prev => ({
+          ...prev,
+          name: b.guestName || '',
+          phone: b.phone || '',
+          email: b.email || '',
+          address: b.address || '',
+          session: b.session || '',
+          adults: b.adults || 1,
+          kids: b.kids || 0,
+          withFood: b.withFood || false,
+          // foodPackage will be set in a separate effect after poolPartyData is available
+        }));
+
+        setPaymentType(b.paymentType || 'token');
+        setManualAmountPaid((b.amountPaid || 0).toString());
+
+      } catch (err) {
+        console.error(err);
+        toast.error('Failed to load booking');
+        navigate('/admin/pool-party-bookings');
       } finally {
         setLoading(false);
       }
     };
+    fetchBooking();
+  }, [id, API_BASE_URL, navigate]);
 
-    initializeData();
-  }, [id]);
-
-  const fetchBookingById = async (bookingId) => {
-    try {
-      const token = getToken();
-      const response = await axios.get(
-        `${API_BASE_URL}/pool-parties/bookings/${bookingId}`,
-        {
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
+  // --------------------------------------------------------------------
+  // After poolPartyData is loaded, set the initial foodPackage value using the unique _id
+  useEffect(() => {
+    if (poolPartyData && booking) {
+      const storedFoodId = booking.foodPackage?.foodPackageId || booking.foodPackage?._id || '';
+      // Try to find a package that matches by _id first, then by foodPackageId
+      const matchingPkg = foodPackages.find(pkg => 
+        String(pkg._id) === storedFoodId || 
+        (pkg.foodPackageId && pkg.foodPackageId === storedFoodId)
       );
-      
-      if (response.data.success) {
-        const booking = response.data.booking || response.data;
-        
-        // Set payment type from booking data
-        setPaymentType(booking.paymentType || 'token');
-        if (booking.paymentType === 'token' && booking.amountPaid) {
-          setTokenAmount(booking.amountPaid);
-        }
-        
-        // Set form data for editing
-        setFormData({
-          locationId: booking.locationId?._id || booking.locationId || '',
-          guestName: booking.guestName || '',
-          email: booking.email || '',
-          phone: booking.phone || '',
-          address: booking.address || '',
-          bookingDate: booking.bookingDate ? booking.bookingDate.split('T')[0] : new Date().toISOString().split('T')[0],
-          session: booking.session || '',
-          adults: booking.adults || 1,
-          kids: booking.kids || 0,
-          totalGuests: booking.totalGuests || 1,
-          status: booking.status || 'confirmed',
-          paymentType: booking.paymentType || 'token',
-          amountPaid: booking.amountPaid || 0,
-          remainingAmount: booking.remainingAmount || 0,
-          pricing: booking.pricing || {
-            pricePerAdult: 0,
-            pricePerKid: 0,
-            totalPrice: 0
-          }
-        });
-
-        // Fetch sessions for this location and date
-        const locationId = booking.locationId?._id || booking.locationId;
-        if (locationId && booking.bookingDate) {
-          await fetchSessions(locationId, booking.bookingDate.split('T')[0]);
-          await fetchPoolPartyForLocation(locationId);
-        }
+      if (matchingPkg) {
+        setFormData(prev => ({ ...prev, foodPackage: String(matchingPkg._id) }));
       } else {
-        throw new Error(response.data.error || 'Failed to fetch booking');
+        // No match, default to empty (no food selected)
+        setFormData(prev => ({ ...prev, withFood: false, foodPackage: '' }));
       }
-    } catch (error) {
-      console.error('Error fetching booking:', error);
-      showToast('Failed to load booking details', 'error');
     }
-  };
+  }, [poolPartyData, booking, foodPackages]);
 
-  const fetchLocations = async () => {
+  // Fetch session availability using locationId
+  const fetchSessionsAvailability = useCallback(async (locationId, date, currentSession = null) => {
+    if (!locationId || !date) return;
+    setAvailabilityLoading(true);
+    setAvailabilityError('');
     try {
-      const token = getToken();
-      const response = await axios.get(`${API_BASE_URL}/locations`, {
-        headers: { 
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      let locationsData = [];
-      
-      if (response.data.success && Array.isArray(response.data.locations)) {
-        locationsData = response.data.locations;
-      } else if (Array.isArray(response.data)) {
-        locationsData = response.data;
-      } else if (response.data.data && Array.isArray(response.data.data)) {
-        locationsData = response.data.data;
+      const res = await fetch(
+        `${API_BASE_URL}/pool-parties/sessions-availability/${locationId}?date=${date}`
+      );
+      const data = await res.json();
+      if (data.success) {
+        setSessionsAvailability(data.sessions);
+      } else {
+        setAvailabilityError(data.error || 'Failed to load availability');
+        setSessionsAvailability([]);
       }
-      
-      setLocations(locationsData);
-      
-    } catch (error) {
-      console.error('Error fetching locations:', error);
-      showToast('Failed to fetch locations', 'error');
-      setLocations([]);
+    } catch (err) {
+      setAvailabilityError('Network error');
+    } finally {
+      setAvailabilityLoading(false);
     }
-  };
+  }, [API_BASE_URL]);
 
-  const fetchSessions = async (locationId, date) => {
-    if (!locationId || !date) {
-      setSessions([]);
+  // When bookingDate changes and locationDetails is available, refetch availability
+  useEffect(() => {
+    if (locationDetails?._id && formData.bookingDate) {
+      fetchSessionsAvailability(locationDetails._id, formData.bookingDate, formData.session);
+    }
+  }, [formData.bookingDate, locationDetails?._id, fetchSessionsAvailability]);
+
+  // Fetch active offer when date changes
+  const fetchActiveOffer = useCallback(async () => {
+    if (!poolPartyData?._id || !formData.bookingDate) {
+      setActiveOffer(null);
       return;
     }
-
+    setOfferLoading(true);
     try {
-      const token = getToken();
-      const response = await axios.get(
-        `${API_BASE_URL}/pool-parties/sessions-availability/${locationId}?date=${date}`,
-        {
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
+      const res = await fetch(
+        `${API_BASE_URL}/offers/active/poolparty?poolPartyId=${poolPartyData._id}&bookingDate=${formData.bookingDate}`
       );
-      
-      if (response.data.success && Array.isArray(response.data.sessions)) {
-        setSessions(response.data.sessions);
-      } else if (Array.isArray(response.data)) {
-        setSessions(response.data);
+      const data = await res.json();
+      if (data.success && data.data.length > 0) {
+        setActiveOffer(data.data[0]);
       } else {
-        setSessions([]);
-        showToast('No sessions available for selected date', 'info');
+        setActiveOffer(null);
       }
-    } catch (error) {
-      console.error('Error fetching sessions:', error);
-      setSessions([]);
-      showToast('Failed to fetch sessions', 'error');
+    } catch (err) {
+      console.error('Offer fetch error', err);
+      setActiveOffer(null);
+    } finally {
+      setOfferLoading(false);
     }
-  };
+  }, [poolPartyData, formData.bookingDate, API_BASE_URL]);
 
+  useEffect(() => {
+    fetchActiveOffer();
+  }, [fetchActiveOffer]);
+
+  // --------------------------------------------------------------------
+  // Form validation
+  const isFormValid = useMemo(() => {
+    if (!locationDetails) return false;
+    if (!formData.bookingDate) return false;
+    if (!formData.session) return false;
+    if (!isSessionAvailable) return false;
+    if (!formData.name.trim()) return false;
+    if (!/^\d{10}$/.test(formData.phone)) return false;
+    if (!formData.email || !/\S+@\S+\.\S+/.test(formData.email)) return false;
+    if (!formData.address.trim()) return false;
+    if (totalGuests > (poolPartyData?.totalCapacity || Infinity)) return false;
+    return true;
+  }, [locationDetails, formData, isSessionAvailable, totalGuests, poolPartyData]);
+
+  // --------------------------------------------------------------------
+  // Handlers
   const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    
-    // Only allow editing guest info in edit mode
-    if (isEditMode && !['guestName', 'email', 'phone', 'address', 'status'].includes(name)) {
-      return;
-    }
-    
+    const { name, value, type, checked } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: value
+      [name]: type === 'checkbox' ? checked : value,
     }));
-
-    // If location changes, fetch pool party and sessions
-    if (name === 'locationId' && !isEditMode) {
-      setPoolPartyData(null);
-      if (value) {
-        fetchPoolPartyForLocation(value);
-      }
-      setFormData(prev => ({ 
-        ...prev, 
-        [name]: value,
-        session: '',
-        bookingDate: new Date().toISOString().split('T')[0]
-      }));
-    }
-    
-    // If location or date changes, fetch sessions
-    if ((name === 'locationId' || name === 'bookingDate') && !isEditMode) {
-      const locationId = name === 'locationId' ? value : formData.locationId;
-      const date = name === 'bookingDate' ? value : formData.bookingDate;
-      if (locationId && date) {
-        fetchSessions(locationId, date);
-        setFormData(prev => ({ ...prev, session: '' }));
-      }
-    }
   };
 
   const handleNumberChange = (field, operation) => {
-    // Don't allow number changes in edit mode
-    if (isEditMode) return;
-    
-    const newValue = operation === 'increase' 
-      ? formData[field] + 1
-      : Math.max(field === 'adults' ? 1 : 0, formData[field] - 1);
-    
-    const updatedFormData = {
-      ...formData,
-      [field]: newValue,
-      totalGuests: field === 'adults' || field === 'kids' 
-        ? (field === 'adults' ? newValue : formData.adults) + (field === 'kids' ? newValue : formData.kids)
-        : formData.totalGuests
-    };
-    
-    setFormData(updatedFormData);
-    
-    // Recalculate price if session is already selected
-    if (formData.session) {
-      const selectedSession = sessions.find(s => s.session === formData.session);
-      if (selectedSession) {
-        handleSessionChange(selectedSession, updatedFormData);
-      }
-    }
+    setFormData(prev => {
+      const newValue = operation === 'increase'
+        ? prev[field] + 1
+        : Math.max(field === 'adults' ? 1 : 0, prev[field] - 1);
+      return { ...prev, [field]: newValue };
+    });
   };
 
-  const handleSessionChange = (session, customFormData = null) => {
-    if (isEditMode) return;
-    
-    const currentFormData = customFormData || formData;
-    
-    const totalPrice = ((session.pricing?.perAdult || 0) * currentFormData.adults) + 
-                       ((session.pricing?.perKid || 0) * currentFormData.kids);
-    
-    const updatedFormData = {
-      ...currentFormData,
-      session: session.session,
-      pricing: {
-        pricePerAdult: session.pricing?.perAdult || 0,
-        pricePerKid: session.pricing?.perKid || 0,
-        totalPrice: totalPrice
-      }
-    };
-    
-    setFormData(updatedFormData);
-    
-    // Recalculate payment amounts
-    calculatePaymentAmounts(totalPrice, updatedFormData);
-  };
-
-  const calculatePaymentAmounts = (totalPrice, currentFormData = formData) => {
-    let amountPaid = 0;
-    let remainingAmount = 0;
-    
-    if (paymentType === 'full') {
-      amountPaid = totalPrice;
-      remainingAmount = 0;
-    } else if (paymentType === 'token') {
-      amountPaid = tokenAmount;
-      remainingAmount = Math.max(0, totalPrice - tokenAmount);
-    }
-    
-    setFormData(prev => ({
-      ...prev,
-      amountPaid,
-      remainingAmount,
-      pricing: {
-        ...prev.pricing,
-        totalPrice
-      }
-    }));
-  };
-
-  const calculateTotalPrice = () => {
-    if (!formData.session) return 0;
-    return (formData.pricing.pricePerAdult * formData.adults) + 
-           (formData.pricing.pricePerKid * formData.kids);
-  };
-
-  const calculateRemainingAmount = () => {
-    const totalPrice = calculateTotalPrice();
-    const amountToPay = paymentType === 'full' ? totalPrice : tokenAmount;
-    const remainingAmount = Math.max(0, totalPrice - amountToPay);
-    
-    setFormData(prev => ({
-      ...prev,
-      amountPaid: amountToPay,
-      remainingAmount
-    }));
-    
-    return remainingAmount;
-  };
-
-  const handlePaymentTypeChange = (type) => {
-    if (isEditMode) return;
-    
-    setPaymentType(type);
-    
-    if (type === 'full') {
-      const totalPrice = calculateTotalPrice();
-      setFormData(prev => ({
-        ...prev,
-        amountPaid: totalPrice,
-        remainingAmount: 0
-      }));
-    } else if (type === 'token') {
-      calculateRemainingAmount();
-    }
-  };
-
-  const handleTokenAmountChange = (e) => {
-    if (isEditMode) return;
-    
-    const amount = parseInt(e.target.value) || 2000;
-    setTokenAmount(amount);
-    
-    const totalPrice = calculateTotalPrice();
-    const remainingAmount = Math.max(0, totalPrice - amount);
-    
-    setFormData(prev => ({
-      ...prev,
-      amountPaid: amount,
-      remainingAmount
-    }));
-  };
-
-  const validateForm = () => {
-    if (!formData.locationId) {
-      showToast('Please select a location', 'error');
-      return false;
-    }
-    if (!poolPartyData) {
-      showToast('No pool party configuration found for selected location', 'error');
-      return false;
-    }
-    if (!formData.guestName.trim()) {
-      showToast('Please enter guest name', 'error');
-      return false;
-    }
-    if (!formData.email.trim() || !/\S+@\S+\.\S+/.test(formData.email)) {
-      showToast('Please enter a valid email address', 'error');
-      return false;
-    }
-    if (!formData.phone.trim() || !/^\d{10}$/.test(formData.phone)) {
-      showToast('Please enter a valid 10-digit phone number', 'error');
-      return false;
-    }
-    if (!formData.address.trim()) {
-      showToast('Please enter guest address', 'error');
-      return false;
-    }
-    if (!formData.session) {
-      showToast('Please select a session', 'error');
-      return false;
-    }
-    if (formData.totalGuests < 1) {
-      showToast('Please add at least 1 guest', 'error');
-      return false;
-    }
-
-    const selectedSession = sessions.find(s => s.session === formData.session);
-    if (selectedSession && selectedSession.availableCapacity < formData.totalGuests) {
-      showToast(`Not enough capacity. Only ${selectedSession.availableCapacity} spots available.`, 'error');
-      return false;
-    }
-
-    return true;
-  };
-
-  const handleSubmit = async (e) => {
+  // --------------------------------------------------------------------
+  // Update submission
+  const handleUpdate = async (e) => {
     e.preventDefault();
-    
-    if (!validateForm()) return;
+    if (!isFormValid) {
+      toast.error('Please fill all required fields correctly');
+      return;
+    }
+
+    setSubmitting(true);
+
+    const selectedFoodPkg = foodPackages.find(
+      pkg => String(pkg._id) === formData.foodPackage
+    );
+
+    const payload = {
+      guestName: formData.name.trim(),
+      email: formData.email.trim(),
+      phone: formData.phone.trim(),
+      address: formData.address.trim(),
+      bookingDate: formData.bookingDate,
+      session: formData.session,
+      adults: formData.adults,
+      kids: formData.kids,
+      withFood: formData.withFood,
+      foodPackage: formData.withFood && selectedFoodPkg ? {
+        foodPackageId: selectedFoodPkg._id, // send the unique _id
+        name: selectedFoodPkg.name,
+        pricePerAdult: selectedFoodPkg.pricePerAdult,
+        pricePerKid: selectedFoodPkg.pricePerKid,
+      } : null,
+      paymentType,
+      amountPaid: parseFloat(manualAmountPaid) || 0,
+      remainingAmount: Math.max(0, totalPrice - (parseFloat(manualAmountPaid) || 0)),
+      pricing: {
+        pricePerAdult: getSessionPricing(formData.session).perAdult,
+        pricePerKid: getSessionPricing(formData.session).perKid,
+        totalPrice: totalPrice,
+      },
+    };
 
     try {
-      setSaving(true);
-      showToast(isEditMode ? 'Updating booking...' : 'Creating booking...', 'info');
-
-      const token = getToken();
-      const totalPrice = calculateTotalPrice();
-      
-      // Prepare payload
-      const payload = {
-        poolPartyId: poolPartyData._id,
-        locationId: formData.locationId,
-        guestName: formData.guestName,
-        email: formData.email,
-        phone: formData.phone,
-        address: formData.address,
-        bookingDate: formData.bookingDate,
-        session: formData.session,
-        adults: formData.adults,
-        kids: formData.kids,
-        totalGuests: formData.totalGuests,
-        status: formData.status,
-        paymentType: paymentType,
-        amountPaid: formData.amountPaid,
-        remainingAmount: formData.remainingAmount,
-        pricing: {
-          pricePerAdult: formData.pricing.pricePerAdult,
-          pricePerKid: formData.pricing.pricePerKid,
-          totalPrice: totalPrice
-        }
-      };
-
-      let response;
-      if (isEditMode) {
-        // Only update guest info and status in edit mode
-        response = await axios.put(
-          `${API_BASE_URL}/pool-parties/bookings/${id}`,
-          {
-            guestName: formData.guestName,
-            email: formData.email,
-            phone: formData.phone,
-            address: formData.address,
-            status: formData.status
-          },
-          {
-            headers: { 
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}` 
-            }
-          }
-        );
+      const res = await fetch(`${API_BASE_URL}/pool-parties/bookings/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUpdateResult(data.booking);
+        setStep('confirmation');
+        toast.success('Booking updated successfully');
       } else {
-        // Create new booking with payment details
-        response = await axios.post(
-          `${API_BASE_URL}/pool-parties/bookings`,
-          payload,
-          {
-            headers: { 
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}` 
-            }
-          }
-        );
+        toast.error(data.error || 'Failed to update booking');
       }
-
-      if (response.data.success) {
-        const successMessage = isEditMode 
-          ? 'Booking updated successfully!' 
-          : 'Booking created successfully! Payment can be collected from the bookings list.';
-        showToast(successMessage, 'success');
-        
-        setTimeout(() => {
-          navigate('/pool-party-bookings');
-        }, 2000);
-      } else {
-        showToast(response.data.error || 'Operation failed', 'error');
-      }
-    } catch (error) {
-      console.error('Error saving booking:', error);
-      showToast(error.response?.data?.error || error.message || 'Failed to save booking', 'error');
+    } catch (err) {
+      toast.error('Network error');
     } finally {
-      setSaving(false);
+      setSubmitting(false);
     }
   };
 
-  const handleCancel = () => {
-    navigate('/pool-party-bookings');
+  // --------------------------------------------------------------------
+  // PDF download
+  const downloadPDF = async (bookingId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/pool-parties/${bookingId}/download-pdf`);
+      if (!response.ok) throw new Error('Failed to download PDF');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `poolparty-booking-${bookingId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('PDF download failed:', error);
+      toast.error('Failed to download PDF. Please try again.');
+    }
   };
 
-  const toggleDebug = () => {
-    setShowDebug(!showDebug);
-  };
-
+  // --------------------------------------------------------------------
+  // Loading
   if (loading) {
     return (
-      <div className="flex justify-center items-center min-h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading booking form...</p>
+      <div className="min-h-screen bg-gray-50 py-8 px-4 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+
+  // --------------------------------------------------------------------
+  // Confirmation step
+  if (step === 'confirmation' && updateResult) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-md mx-auto">
+          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+            <div className="p-6">
+              <div className="text-center">
+                <div className="flex justify-center mb-4">
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-green-100 rounded-full animate-ping opacity-75"></div>
+                    <CheckCircle className="h-12 w-12 text-green-500 relative z-10" />
+                  </div>
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">Booking Updated!</h3>
+                <p className="text-gray-500 text-sm mb-6">Booking ID: #{updateResult._id?.slice(-8)}</p>
+
+                <div className="bg-gray-50 rounded-xl p-5 mb-6 text-left space-y-3">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Location:</span>
+                    <span className="font-medium">{locationDetails?.name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Date:</span>
+                    <span className="font-medium">{formatDate(formData.bookingDate)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Session:</span>
+                    <span className="font-medium">{formData.session}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Guests:</span>
+                    <span className="font-medium">{formData.adults} adults, {formData.kids} kids</span>
+                  </div>
+                  {formData.withFood && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Food:</span>
+                      <span className="font-medium text-green-600">
+                        {foodPackages.find(p => String(p._id) === formData.foodPackage)?.name}
+                      </span>
+                    </div>
+                  )}
+                  <div className="pt-3 border-t border-gray-200">
+                    <div className="flex justify-between">
+                      <span className="font-semibold">Total</span>
+                      <span className="font-bold text-blue-600">₹{totalPrice.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Paid</span>
+                      <span className="font-medium text-green-600">₹{(parseFloat(manualAmountPaid) || 0).toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Remaining</span>
+                      <span className="font-medium text-orange-600">₹{remainingAmount.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3 mb-3">
+                  <button
+                    onClick={() => downloadPDF(updateResult._id)}
+                    className="flex-1 bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 flex items-center justify-center gap-2"
+                  >
+                    <Download size={16} /> Download PDF
+                  </button>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => navigate('/admin/pool-party-bookings')}
+                    className="flex-1 bg-gray-600 text-white font-semibold py-3 rounded-xl hover:bg-gray-700"
+                  >
+                    Back to List
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
-  // Payment Type Badge Component
-  const PaymentTypeBadge = () => {
-    const config = {
-      full: { color: 'bg-blue-100 text-blue-800', label: 'Full Payment' },
-      token: { color: 'bg-purple-100 text-purple-800', label: 'Token Payment' }
-    };
-    
-    const currentConfig = config[paymentType] || config.token;
-    
-    return (
-      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${currentConfig.color}`}>
-        <Wallet className="w-4 h-4 mr-1" />
-        {currentConfig.label}
-      </span>
-    );
-  };
-
-  // Status Badge Component
-  const StatusBadge = () => {
-    const statusConfig = {
-      pending: { color: 'bg-yellow-100 text-yellow-800', icon: Clock, label: 'Pending' },
-      confirmed: { color: 'bg-green-100 text-green-800', icon: CheckCircle, label: 'Confirmed' },
-      cancelled: { color: 'bg-red-100 text-red-800', icon: XCircle, label: 'Cancelled' },
-      completed: { color: 'bg-blue-100 text-blue-800', icon: CheckCircle, label: 'Completed' }
-    };
-    
-    const config = statusConfig[formData.status] || statusConfig.confirmed;
-    const Icon = config.icon;
-    
-    return (
-      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${config.color}`}>
-        <Icon className="w-4 h-4 mr-1" />
-        {config.label}
-      </span>
-    );
-  };
-
+  // --------------------------------------------------------------------
+  // Edit form
   return (
-    <div className="space-y-6">
-      {toast.show && (
-        <InlineToast 
-          message={toast.message} 
-          type={toast.type} 
-          onClose={() => setToast({ ...toast, show: false })} 
-        />
-      )}
-
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={handleCancel}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <ArrowLeft className="w-5 h-5 text-gray-600" />
+    <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-4xl mx-auto">
+        <div className="mb-4 flex items-center gap-4">
+          <button onClick={() => navigate(-1)} className="p-2 hover:bg-gray-200 rounded-full">
+            <ArrowLeft size={20} className="text-gray-600" />
           </button>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              {isEditMode ? 'Edit Pool Party Booking' : 'Add New Pool Party Booking'}
-            </h1>
-            <p className="text-gray-600 mt-1">
-              {isEditMode ? 'Update basic booking information' : 'Create a new pool party booking'}
-            </p>
-          </div>
+          <h1 className="text-2xl font-bold text-gray-900">Edit Pool Party Booking</h1>
         </div>
-        
-        <div className="flex items-center space-x-3">
-          {isEditMode && (
-            <>
-              <StatusBadge />
-              <PaymentTypeBadge />
-              <button
-                onClick={() => navigate(`/pool-party-bookings/${id}`)}
-                className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors"
-              >
-                <Eye className="w-4 h-4 mr-2" />
-                View Details
-              </button>
-            </>
-          )}
-          
-          <button
-            onClick={toggleDebug}
-            className="text-xs text-gray-500 hover:text-gray-700"
-          >
-            {showDebug ? 'Hide Debug' : 'Show Debug'}
-          </button>
-          
-          <span className="text-sm text-gray-500">
-            {isEditMode ? `Editing Booking #${id.slice(-8)}` : 'Creating new booking'}
-          </span>
-        </div>
-      </div>
 
-      {/* Payment Information Note for New Bookings */}
-      {!isEditMode && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex items-start gap-2">
-            <Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-            <div>
-              <h4 className="text-sm font-semibold text-blue-800 mb-1">Payment Information</h4>
-              <p className="text-sm text-blue-700">
-                New bookings will be created with <strong>pending payment status</strong>. 
-                Payment can be collected later from the bookings list using the "Pay" button.
-              </p>
+        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+          {/* Step indicator */}
+          <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-2 text-sm">
+            <div className="flex items-center text-blue-600 font-semibold">
+              <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mr-2 text-xs">1</span>
+              Edit Details
+            </div>
+            <ChevronDown className="w-4 h-4 text-gray-400 rotate-270" />
+            <div className="flex items-center text-gray-500">
+              <span className="w-6 h-6 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center mr-2 text-xs">2</span>
+              Confirmation
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Debug Panel */}
-      {showDebug && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-yellow-800">Debug Information</h3>
-            <button onClick={toggleDebug} className="text-yellow-600 hover:text-yellow-800">
-              <XCircle className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="space-y-2 text-xs text-yellow-700">
-            <p><strong>Edit Mode:</strong> {isEditMode ? 'Yes' : 'No'}</p>
-            <p><strong>Payment Type:</strong> {paymentType}</p>
-            <p><strong>Token Amount:</strong> ₹{tokenAmount}</p>
-            <p><strong>Amount Paid:</strong> ₹{formData.amountPaid}</p>
-            <p><strong>Remaining Amount:</strong> ₹{formData.remainingAmount}</p>
-            <p><strong>Total Amount:</strong> ₹{calculateTotalPrice()}</p>
-          </div>
-        </div>
-      )}
+          {/* Main content */}
+          <form onSubmit={handleUpdate} className="p-6 space-y-6">
+            {/* Location (disabled) */}
+            <section className="border border-gray-200 rounded-xl p-5">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Location</label>
+              <input
+                type="text"
+                value={locationDetails?.name || ''}
+                disabled
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-500"
+              />
+            </section>
 
-      {/* Main Form */}
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left Column */}
-          <div className="space-y-6">
-            {/* Location & Date Section */}
-            {isEditMode ? (
-              <LockedSection title="Location & Date" icon={Home}>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Location *
-                    </label>
-                    <select
-                      name="locationId"
-                      value={formData.locationId}
-                      onChange={handleInputChange}
-                      required
-                      disabled
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
-                    >
-                      <option value="">Select Location</option>
-                      {locations.map((location) => (
-                        <option key={location._id || location.id} value={location._id || location.id}>
-                          {location.name || location.title || location.locationName || `Location ${(location._id || location.id)?.slice(-6)}`}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Booking Date *
-                    </label>
-                    <input
-                      type="date"
-                      name="bookingDate"
-                      value={formData.bookingDate}
-                      onChange={handleInputChange}
-                      required
-                      disabled
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
-                    />
-                  </div>
-                </div>
-              </LockedSection>
-            ) : (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <Home className="w-5 h-5 mr-2 text-gray-400" />
-                  Location & Date
-                </h2>
-                
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-gray-700">
-                      Location *
-                    </label>
-                    <select
-                      name="locationId"
-                      value={formData.locationId}
-                      onChange={handleInputChange}
-                      required
-                      disabled={saving}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                    >
-                      <option value="">Select Location</option>
-                      {locations.map((location) => (
-                        <option key={location._id || location.id} value={location._id || location.id}>
-                          {location.name || location.title || location.locationName || `Location ${(location._id || location.id)?.slice(-6)}`}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-gray-700">
-                      Booking Date *
-                    </label>
-                    <input
-                      type="date"
-                      name="bookingDate"
-                      value={formData.bookingDate}
-                      onChange={handleInputChange}
-                      min={new Date().toISOString().split('T')[0]}
-                      required
-                      disabled={saving}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
-                    />
-                  </div>
-                </div>
+            {/* Booking Date */}
+            <section className="border border-gray-200 rounded-xl p-5">
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-blue-600" /> Booking Date
+              </h3>
+              <div>
+                <input
+                  type="date"
+                  name="bookingDate"
+                  value={formData.bookingDate}
+                  onChange={handleInputChange}
+                  min={new Date().toISOString().split('T')[0]}
+                  required
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                />
               </div>
-            )}
+              {availabilityLoading && (
+                <div className="flex items-center gap-2 text-sm text-blue-600 mt-2">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Checking availability...
+                </div>
+              )}
+              {availabilityError && (
+                <p className="text-sm text-red-600 mt-2">{availabilityError}</p>
+              )}
+            </section>
 
             {/* Session Selection */}
-            {isEditMode ? (
-              <LockedSection title="Session Selection" icon={Clock} note="Cannot change session in edit mode">
-                <div className="space-y-4">
-                  <div className="border border-blue-200 bg-blue-50 rounded-lg p-4">
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <h4 className="font-semibold text-gray-900">{formData.session}</h4>
-                        <p className="text-sm text-gray-600">Selected Session</p>
-                      </div>
-                      <Lock className="w-4 h-4 text-gray-400" />
-                    </div>
-                  </div>
-                </div>
-              </LockedSection>
-            ) : (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <Clock className="w-5 h-5 mr-2 text-gray-400" />
-                  Session Selection
-                </h2>
-                
-                {sessions.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {sessions.map((sessionItem) => {
-                      const isSelected = formData.session === sessionItem.session;
-                      const isAvailable = sessionItem.isAvailable !== false;
-                      const capacityLeft = sessionItem.availableCapacity || 0;
-                      
-                      return (
-                        <div
-                          key={sessionItem.session}
-                          onClick={() => !saving && isAvailable && handleSessionChange(sessionItem)}
-                          className={`border rounded-lg p-4 transition-all ${
+            {sessionsAvailability.length > 0 && (
+              <section className="border border-gray-200 rounded-xl p-5">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-blue-600" /> Session
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {sessionsAvailability.map((session) => {
+                    const sessionPricing = getSessionPricing(session.session);
+                    const isAvailable = session.isAvailable && session.availableCapacity >= totalGuests;
+                    const isSelected = formData.session === session.session;
+                    return (
+                      <div
+                        key={session.session}
+                        onClick={() => !submitting && isAvailable && setFormData(prev => ({ ...prev, session: session.session }))}
+                        className={`cursor-pointer border-2 rounded-xl p-5 transition-all ${
+                          isSelected
+                            ? isAvailable
+                              ? 'border-blue-500 bg-blue-50'
+                              : 'border-red-500 bg-red-50'
+                            : isAvailable
+                              ? 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                              : 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="font-semibold text-gray-900 text-base truncate">{session.session}</h4>
+                          <div className={`w-5 h-5 rounded-full border-2 ${
                             isSelected
-                              ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
-                              : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/50'
-                          } ${!isAvailable ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
-                        >
-                          <div className="flex justify-between items-start mb-2">
-                            <div>
-                              <h4 className="font-semibold text-gray-900">{sessionItem.session}</h4>
-                              <p className="text-sm text-gray-600 flex items-center gap-1 mt-1">
-                                <Clock size={14} />
-                                {sessionItem.startTime} - {sessionItem.endTime}
-                              </p>
-                            </div>
-                            {isSelected && (
-                              <CheckCircle className="w-5 h-5 text-blue-500" />
-                            )}
-                          </div>
-                          
-                          <div className="flex justify-between items-center text-sm">
-                            <div>
-                              <p className="text-gray-700">
-                                ₹{sessionItem.pricing?.perAdult || 0}/adult
-                                {sessionItem.pricing?.perKid ? `, ₹${sessionItem.pricing.perKid}/kid` : ''}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Users size={14} className="text-gray-500" />
-                              <span className={`font-medium ${
-                                capacityLeft < formData.totalGuests ? 'text-red-600' : 'text-gray-700'
-                              }`}>
-                                {capacityLeft} spots left
+                              ? isAvailable ? 'border-blue-500 bg-blue-500' : 'border-red-500 bg-red-500'
+                              : 'border-gray-300'
+                          }`} />
+                        </div>
+                        <p className="text-sm text-gray-600 mb-2">{session.startTime} - {session.endTime}</p>
+                        <div className="flex justify-between text-sm text-gray-500 mb-3">
+                          <span>Adult: ₹{sessionPricing.perAdult}</span>
+                          <span>Kid: ₹{sessionPricing.perKid}</span>
+                        </div>
+                        <div className="pt-3 border-t border-gray-200">
+                          {isAvailable ? (
+                            <div className="flex items-center justify-between">
+                              <span className="text-green-600 text-sm font-medium flex items-center gap-1">
+                                <CheckCircle className="w-4 h-4" /> Available
+                              </span>
+                              <span className="text-sm text-gray-500 flex items-center gap-1">
+                                <Users className="w-4 h-4" />
+                                {session.availableCapacity}/{session.totalCapacity}
                               </span>
                             </div>
-                          </div>
-                          
-                          {!isAvailable && (
-                            <div className="mt-2 text-xs text-red-600 flex items-center gap-1">
-                              <AlertCircle size={12} />
-                              Not available
-                            </div>
+                          ) : (
+                            <span className="text-red-600 text-sm font-medium">
+                              {session.availableCapacity === 0 ? 'Fully booked' : `Only ${session.availableCapacity} spots left`}
+                            </span>
                           )}
                         </div>
-                      );
-                    })}
-                  </div>
-                ) : formData.locationId && formData.bookingDate ? (
-                  <div className="border border-yellow-200 rounded-lg p-4 bg-yellow-50">
-                    <div className="flex items-center gap-2 text-yellow-800">
-                      <AlertCircle size={16} />
-                      <p className="text-sm">No sessions available for the selected date. Please choose a different date or location.</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                    <div className="flex items-center gap-2 text-gray-600">
-                      <Info size={16} />
-                      <p className="text-sm">Please select location and date to see available sessions.</p>
-                    </div>
-                  </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {!isSessionAvailable && formData.session && (
+                  <p className="text-sm text-red-600 mt-2">
+                    Selected session is no longer available with current guest count.
+                  </p>
                 )}
-              </div>
+              </section>
             )}
 
             {/* Guest Count */}
-            {isEditMode ? (
-              <LockedSection title="Guest Count" icon={Users} note="Cannot be changed">
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="border border-gray-200 rounded-lg p-4">
-                      <div className="mb-3">
-                        <h4 className="font-semibold text-gray-900">Adults</h4>
-                        <p className="text-sm text-gray-600">Ages 13+</p>
-                      </div>
-                      <div className="text-lg font-bold">{formData.adults}</div>
+            <section className="border border-gray-200 rounded-xl p-5">
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-600" /> Guest Count
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Adults */}
+                <div className="border border-gray-200 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h4 className="font-semibold text-gray-900">Adults</h4>
+                      <p className="text-sm text-gray-600">Ages 13+</p>
                     </div>
-
-                    <div className="border border-gray-200 rounded-lg p-4">
-                      <div className="mb-3">
-                        <h4 className="font-semibold text-gray-900">Kids</h4>
-                        <p className="text-sm text-gray-600">Ages 2-12</p>
-                      </div>
-                      <div className="text-lg font-bold">{formData.kids}</div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => handleNumberChange('adults', 'decrease')}
+                        disabled={formData.adults <= 1}
+                        className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center disabled:opacity-50"
+                      >
+                        -
+                      </button>
+                      <span className="font-bold w-6 text-center">{formData.adults}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleNumberChange('adults', 'increase')}
+                        disabled={totalGuests >= (poolPartyData?.totalCapacity || 10)}
+                        className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center disabled:opacity-50"
+                      >
+                        +
+                      </button>
                     </div>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Total Guests: <span className="font-semibold">{formData.totalGuests}</span>
                   </div>
                 </div>
-              </LockedSection>
-            ) : (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <Users className="w-5 h-5 mr-2 text-gray-400" />
-                  Guest Count
-                </h2>
-                
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="border border-gray-200 rounded-lg p-4">
-                      <div className="flex justify-between items-center mb-3">
-                        <div>
-                          <h4 className="font-semibold text-gray-900">Adults</h4>
-                          <p className="text-sm text-gray-600">Ages 13+</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleNumberChange('adults', 'decrease')}
-                            disabled={formData.adults <= 1 || saving}
-                            className="w-6 h-6 rounded border border-gray-300 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed hover:border-gray-400"
-                          >
-                            -
-                          </button>
-                          <span className="font-bold text-lg w-8 text-center">{formData.adults}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleNumberChange('adults', 'increase')}
-                            disabled={saving}
-                            className="w-6 h-6 rounded border border-gray-300 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed hover:border-gray-400"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        Price: ₹{formData.pricing.pricePerAdult || 0} per adult
-                      </div>
+                {/* Kids */}
+                <div className="border border-gray-200 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h4 className="font-semibold text-gray-900">Kids</h4>
+                      <p className="text-sm text-gray-600">Ages 2-12</p>
                     </div>
-
-                    <div className="border border-gray-200 rounded-lg p-4">
-                      <div className="flex justify-between items-center mb-3">
-                        <div>
-                          <h4 className="font-semibold text-gray-900">Kids</h4>
-                          <p className="text-sm text-gray-600">Ages 2-12</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleNumberChange('kids', 'decrease')}
-                            disabled={formData.kids <= 0 || saving}
-                            className="w-6 h-6 rounded border border-gray-300 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed hover:border-gray-400"
-                          >
-                            -
-                          </button>
-                          <span className="font-bold text-lg w-8 text-center">{formData.kids}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleNumberChange('kids', 'increase')}
-                            disabled={saving}
-                            className="w-6 h-6 rounded border border-gray-300 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed hover:border-gray-400"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        Price: ₹{formData.pricing.pricePerKid || 0} per kid
-                      </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => handleNumberChange('kids', 'decrease')}
+                        disabled={formData.kids <= 0}
+                        className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center disabled:opacity-50"
+                      >
+                        -
+                      </button>
+                      <span className="font-bold w-6 text-center">{formData.kids}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleNumberChange('kids', 'increase')}
+                        disabled={totalGuests >= (poolPartyData?.totalCapacity || 10)}
+                        className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center disabled:opacity-50"
+                      >
+                        +
+                      </button>
                     </div>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Total Guests: <span className="font-semibold">{formData.totalGuests}</span>
                   </div>
                 </div>
               </div>
-            )}
-          </div>
+            </section>
 
-          {/* Right Column */}
-          <div className="space-y-6">
-            {/* Guest Information - Always Editable */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                <User className="w-5 h-5 mr-2 text-gray-400" />
-                Guest Information
-                {isEditMode && (
-                  <span className="ml-2 text-sm font-normal text-green-600 italic">
-                    (Editable)
-                  </span>
-                )}
-              </h2>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Full Name *
+            {/* Food Packages – FIXED */}
+            {foodPackages.length > 0 && (
+              <section className="border border-gray-200 rounded-xl p-5">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Utensils className="w-5 h-5 text-blue-600" /> Food Packages
+                  {activeOffer && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full ml-2">Special offer</span>}
+                </h3>
+                <div className="space-y-3">
+                  <label className="flex items-start gap-3 p-3 border rounded cursor-pointer hover:bg-gray-50">
+                    <input
+                      type="radio"
+                      name="foodOption"
+                      checked={!formData.withFood}
+                      onChange={() => setFormData(prev => ({ ...prev, withFood: false, foodPackage: '' }))}
+                      className="mt-1 w-4 h-4 text-blue-600"
+                    />
+                    <span className="text-gray-700">No food package</span>
                   </label>
+                  {foodPackages.map(pkg => {
+                    // Use the unique MongoDB _id for the radio value
+                    const pkgId = String(pkg._id);
+                    return (
+                      <label key={pkgId} className="flex items-start gap-3 p-3 border rounded cursor-pointer hover:bg-gray-50">
+                        <input
+                          type="radio"
+                          name="foodOption"
+                          value={pkgId}
+                          checked={formData.withFood && formData.foodPackage === pkgId}
+                          onChange={() => setFormData(prev => ({
+                            ...prev,
+                            withFood: true,
+                            foodPackage: pkgId
+                          }))}
+                          className="mt-1 w-4 h-4 text-blue-600"
+                        />
+                        <div>
+                          <p className="font-medium text-gray-900">{pkg.name}</p>
+                          <p className="text-sm text-gray-600">
+                            ₹{pkg.pricePerAdult} per adult, ₹{pkg.pricePerKid} per kid
+                          </p>
+                          {activeOffer && pkg.foodPackageId && (
+                            <span className="text-xs text-green-600">Special offer</span>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {/* Personal Information */}
+            <section className="border border-gray-200 rounded-xl p-5">
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <User className="w-5 h-5 text-blue-600" /> Personal Information
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
                   <input
                     type="text"
-                    name="guestName"
-                    value={formData.guestName}
+                    name="name"
+                    value={formData.name}
                     onChange={handleInputChange}
                     required
-                    disabled={saving}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                    placeholder="Enter guest name"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                   />
                 </div>
-                
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Email Address *
-                  </label>
-                  <div className="relative">
-                    <Mail size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                    <input
-                      type="email"
-                      name="email"
-                      value={formData.email}
-                      onChange={handleInputChange}
-                      required
-                      disabled={saving}
-                      className="w-full pl-10 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
-                      placeholder="guest@example.com"
-                    />
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Phone Number *
-                  </label>
-                  <div className="relative">
-                    <Phone size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                    <input
-                      type="tel"
-                      name="phone"
-                      value={formData.phone}
-                      onChange={handleInputChange}
-                      required
-                      pattern="[0-9]{10}"
-                      maxLength="10"
-                      disabled={saving}
-                      className="w-full pl-10 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                      placeholder="9876543210"
-                    />
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Address *
-                  </label>
-                  <div className="relative">
-                    <MapPin size={18} className="absolute left-3 top-3 transform text-gray-400" />
-                    <textarea
-                      name="address"
-                      value={formData.address}
-                      onChange={handleInputChange}
-                      required
-                      rows={2}
-                      disabled={saving}
-                      className="w-full pl-10 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
-                      placeholder="Enter guest address"
-                    />
-                  </div>
-                </div>
-                
-                {/* Booking Status - Editable in both modes */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Booking Status
-                  </label>
-                  <select
-                    name="status"
-                    value={formData.status}
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone *</label>
+                  <input
+                    type="tel"
+                    name="phone"
+                    value={formData.phone}
                     onChange={handleInputChange}
-                    disabled={saving}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                  >
-                    <option value="pending">Pending</option>
-                    <option value="confirmed">Confirmed</option>
-                    <option value="cancelled">Cancelled</option>
-                    <option value="completed">Completed</option>
-                  </select>
+                    pattern="[0-9]{10}"
+                    required
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                  <input
+                    type="email"
+                    name="email"
+                    value={formData.email}
+                    onChange={handleInputChange}
+                    required
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Address *</label>
+                  <textarea
+                    name="address"
+                    value={formData.address}
+                    onChange={handleInputChange}
+                    rows={2}
+                    required
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  />
                 </div>
               </div>
+            </section>
+
+            {/* Payment section */}
+            <section className="border border-gray-200 rounded-xl p-5">
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-blue-600" /> Payment
+              </h3>
+              <div className="space-y-4">
+                <div className="flex items-center gap-6">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="paymentType"
+                      value="token"
+                      checked={paymentType === 'token'}
+                      onChange={() => setPaymentType('token')}
+                    />
+                    <span>Token (50%)</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="paymentType"
+                      value="full"
+                      checked={paymentType === 'full'}
+                      onChange={() => setPaymentType('full')}
+                    />
+                    <span>Full</span>
+                  </label>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Amount Paid (₹)</label>
+                  <input
+                    type="number"
+                    value={manualAmountPaid}
+                    onChange={(e) => setManualAmountPaid(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                    min="0"
+                    step="100"
+                  />
+                </div>
+
+                {totalPrice > 0 && (
+                  <div className="bg-blue-50 p-4 rounded-lg">
+                    <div className="flex justify-between text-sm">
+                      <span>Total price (based on current selections)</span>
+                      <span className="font-bold text-blue-600">₹{totalPrice.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Amount to pay now</span>
+                      <span className="font-medium text-green-600">₹{(parseFloat(manualAmountPaid) || 0).toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Remaining at property</span>
+                      <span className="font-medium text-orange-600">₹{remainingAmount.toLocaleString()}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* Submit button */}
+            <div className="pt-4">
+              <button
+                type="submit"
+                disabled={!isFormValid || submitting || offerLoading}
+                className="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Updating...
+                  </>
+                ) : offerLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Checking offers...
+                  </>
+                ) : (
+                  'Update Booking'
+                )}
+              </button>
             </div>
 
-            {/* Payment Options - Locked in Edit Mode */}
-            {isEditMode ? (
-              <LockedSection title="Payment Options" icon={Wallet}>
-                <div className="space-y-4">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-700">Payment Type:</span>
-                      <PaymentTypeBadge />
-                    </div>
-                    
-                    {paymentType === 'token' && (
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-sm text-gray-600">Token Amount:</span>
-                          <span className="font-medium text-green-600">₹{tokenAmount.toLocaleString()}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </LockedSection>
-            ) : (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <Wallet className="w-5 h-5 mr-2 text-gray-400" />
-                  Payment Options
-                </h2>
-                
-                <div className="space-y-4">
-                  {/* Payment Type Selection */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-3">
-                      Payment Type *
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className="flex items-center p-3 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                        <input
-                          type="radio"
-                          name="paymentType"
-                          checked={paymentType === 'full'}
-                          onChange={() => handlePaymentTypeChange('full')}
-                          disabled={saving}
-                          className="text-blue-600 focus:ring-blue-500"
-                        />
-                        <div className="ml-3">
-                          <span className="text-sm font-medium text-gray-700">Full Payment</span>
-                          <p className="text-xs text-gray-500">Pay entire amount now</p>
-                        </div>
-                      </label>
-                      
-                      <label className="flex items-center p-3 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                        <input
-                          type="radio"
-                          name="paymentType"
-                          checked={paymentType === 'token'}
-                          onChange={() => handlePaymentTypeChange('token')}
-                          disabled={saving}
-                          className="text-blue-600 focus:ring-blue-500"
-                        />
-                        <div className="ml-3">
-                          <span className="text-sm font-medium text-gray-700">Token Payment</span>
-                          <p className="text-xs text-gray-500">Pay partial amount now</p>
-                        </div>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Token Amount Selection */}
-                  {paymentType === 'token' && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Token Amount *
-                      </label>
-                      <div className="relative">
-                        <IndianRupee className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                        <input
-                          type="number"
-                          value={tokenAmount}
-                          onChange={handleTokenAmountChange}
-                          min="1000"
-                          max={calculateTotalPrice()}
-                          step="500"
-                          disabled={saving}
-                          className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                        />
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        Recommended: ₹2,000 - ₹5,000
-                      </p>
-                    </div>
-                  )}
-                </div>
+            <div className="bg-white border border-gray-200 rounded-lg p-3 flex items-center gap-2">
+              <Shield className="w-5 h-5 text-green-600" />
+              <div>
+                <p className="text-sm font-medium text-green-800">Admin update</p>
+                <p className="text-xs text-gray-600">Changes will be saved</p>
               </div>
-            )}
-
-            {/* Price Summary */}
-            {formData.session && (
-              <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <Tag size={20} />
-                  Price Summary
-                </h3>
-                
-                <div className="space-y-3">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Adults ({formData.adults} × ₹{formData.pricing.pricePerAdult || 0})</span>
-                    <span className="font-semibold">₹{((formData.pricing.pricePerAdult || 0) * formData.adults).toLocaleString()}</span>
-                  </div>
-                  
-                  {formData.kids > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Kids ({formData.kids} × ₹{formData.pricing.pricePerKid || 0})</span>
-                      <span className="font-semibold">₹{((formData.pricing.pricePerKid || 0) * formData.kids).toLocaleString()}</span>
-                    </div>
-                  )}
-                  
-                  <div className="border-t border-gray-300 pt-3 mt-3">
-                    <div className="flex justify-between text-xl font-bold">
-                      <span>Total Amount</span>
-                      <span className="text-blue-600">₹{calculateTotalPrice().toLocaleString()}</span>
-                    </div>
-                    
-                    {/* Payment Breakdown */}
-                    <div className="mt-4 space-y-2 border-t border-gray-300 pt-3">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Payment Status:</span>
-                        <span className="font-semibold text-yellow-600">
-                          Pending
-                        </span>
-                      </div>
-                      
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Amount Paid:</span>
-                        <span className="font-medium text-green-600">₹{formData.amountPaid.toLocaleString()}</span>
-                      </div>
-                      
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Remaining Amount:</span>
-                        <span className={`font-medium ${
-                          formData.remainingAmount > 0 ? 'text-orange-600' : 'text-green-600'
-                        }`}>
-                          ₹{formData.remainingAmount.toLocaleString()}
-                        </span>
-                      </div>
-                      
-                      {!isEditMode && (
-                        <div className="mt-2 text-sm text-gray-600">
-                          <Info className="w-4 h-4 inline mr-1" />
-                          Payment can be collected from the bookings list
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-          <div className="flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={handleCancel}
-              disabled={saving}
-              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving || (!isEditMode && !poolPartyData)}
-              className="px-6 py-2.5 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              {saving ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  {isEditMode ? 'Updating...' : 'Creating...'}
-                </>
-              ) : (
-                <>
-                  {isEditMode ? 'Update Booking' : 'Create Booking'}
-                </>
-              )}
-            </button>
-          </div>
-          
-          {!isEditMode && !poolPartyData && formData.locationId && (
-            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-800">
-                <strong>Pool Party Not Configured:</strong> Please create a pool party configuration for this location first.
-              </p>
             </div>
-          )}
+          </form>
         </div>
-      </form>
+      </div>
     </div>
   );
 };
 
-export default AddEditPoolPartyBooking;
+export default AdminEditPoolPartyBookingPage;

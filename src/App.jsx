@@ -13,12 +13,14 @@ import ChangePassword from './pages/auth/ChangePassword';
 import Profile from './pages/auth/Profile';
 import GetBookings from './components/Bookings/GetBookings';
 import AddEditBooking from './components/Bookings/AddEditBooking';
-import { Dashboard, Locations, Review, Memories, LocationForm, GetPoolParties, GetPoolPartyBookings, AddEditPoolPartyBooking } from "./pages";
+import { Dashboard, Locations, Review, Memories, LocationForm, GetPoolParties, GetPoolPartyBookings, AddEditPoolPartyBooking, AdminBookingModal, AdminCreatePoolPartyBookingPage } from "./pages";
 import { AddLocation, GetLocations } from "./components/Locations";
 import { AddReview, GetReviews } from "./components/Reviews";
 import { AddImage, GetImages } from "./components/Memories";
+import { GetOffers, OfferForm } from "./components/Offers";
 import HomepageHeroManagement from "./components/HomepageHeroManagement";
 import {CreateCaretaker, CaretakerBookings, CaretakerDashboard, CaretakerLogin, CaretakerProfile, CaretakerRegister, GetCaretakers } from './pages/Caretaker';
+import { TermList, TermsForm, TermsView } from './components/TermsAndConditions';
 
 function App() {
   return (
@@ -127,6 +129,37 @@ function App() {
               </ProtectedRoute>
             } />
 
+            {/* Terms and Conditions */}
+            {/* Reviews */}
+            <Route path="/admin/terms" element={
+              <ProtectedRoute>
+                <AdminLayout>
+                  <TermList />
+                </AdminLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/admin/terms/create" element={
+              <ProtectedRoute>
+                <AdminLayout>
+                  <TermsForm />
+                </AdminLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/admin/terms/:id" element={
+              <ProtectedRoute>
+                <AdminLayout>
+                  <TermsView />
+                </AdminLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/admin/terms/:id/edit" element={
+              <ProtectedRoute>
+                <AdminLayout>
+                  <TermsForm />
+                </AdminLayout>
+              </ProtectedRoute>
+            } />
+
             {/* Memories */}
             <Route path="/memories" element={
               <ProtectedRoute>
@@ -169,7 +202,7 @@ function App() {
             <Route path="/bookings/new" element={
               <ProtectedRoute>
                 <AdminLayout>
-                  <AddEditBooking />
+                  <AdminBookingModal />
                 </AdminLayout>
               </ProtectedRoute>
             } />
@@ -201,7 +234,7 @@ function App() {
             <Route path="/pool-party-bookings/new" element={
               <ProtectedRoute>
                 <AdminLayout>
-                  <AddEditPoolPartyBooking />
+                  <AdminCreatePoolPartyBookingPage />
                 </AdminLayout>
               </ProtectedRoute>
             } />
@@ -209,6 +242,31 @@ function App() {
               <ProtectedRoute>
                 <AdminLayout>
                   <AddEditPoolPartyBooking />
+                </AdminLayout>
+              </ProtectedRoute>
+            } />
+
+            {/* Offers */}
+            <Route path="/admin/offers" element={
+              <ProtectedRoute>
+                <AdminLayout>
+                  <GetOffers />
+                </AdminLayout>
+              </ProtectedRoute>
+            } />
+
+            <Route path="/admin/offers/create" element={
+              <ProtectedRoute>
+                <AdminLayout>
+                  <OfferForm />
+                </AdminLayout>
+              </ProtectedRoute>
+            } />
+
+            <Route path="/admin/offers/edit/:offerId" element={
+              <ProtectedRoute>
+                <AdminLayout>
+                  <OfferForm />
                 </AdminLayout>
               </ProtectedRoute>
             } />

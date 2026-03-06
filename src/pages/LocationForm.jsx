@@ -90,25 +90,31 @@ const LocationForm = () => {
     },
     amenities: [],
     pricing: {
-      pricePerAdult: '',
-      pricePerKid: '',
-      extraPersonCharge: ''
+      // Old pricing (per booking)
+      extraPersonCharge: '',
+      // NEW: enhanced pricing structure
+      pricePerPersonNight: '',
+      pricePerAdultDay: '',
+      pricePerKidDay: '',
+      // NEW: food packages (for location bookings)
+      foodPackages: []
     },
     isPoolPartyAvailable: false
   });
 
-  // Change the default poolPartyData state:
-const [poolPartyData, setPoolPartyData] = useState({
-  timings: defaultTimings.map(timing => ({
-    ...timing,
-    capacity: 0,
-    pricing: {
-      perAdult: 0,
-      perKid: 0
+  // Pool party configuration state
+  const [poolPartyConfig, setPoolPartyConfig] = useState({
+    poolPartyType: 'none',
+    sharedPoolPartyId: null,
+    createNewSharedPool: false,
+    createNewPrivatePool: false,
+    newSharedPoolData: {
+      name: '',
+      description: '',
+      locationName: '',
+      timings: []
     }
-  }))
-});
-const [poolPartyId, setPoolPartyId] = useState(null);
+  });
 
   useEffect(() => {
     if (id) {
@@ -140,50 +146,111 @@ const fetchLocationData = async () => {
         nightStay: location.propertyDetails?.nightStay || false
       },
       pricing: {
-        pricePerAdult: location.pricing?.pricePerAdult?.toString() || '',
-        pricePerKid: location.pricing?.pricePerKid?.toString() || '',
-        extraPersonCharge: location.pricing?.extraPersonCharge?.toString() || ''
+        extraPersonCharge: location.pricing?.extraPersonCharge?.toString() || '',
+        pricePerPersonNight: location.pricing?.pricePerPersonNight?.toString() || '',
+        pricePerAdultDay: location.pricing?.pricePerAdultDay?.toString() || '',
+        pricePerKidDay: location.pricing?.pricePerKidDay?.toString() || '',
+        foodPackages: location.pricing?.foodPackages || []
       },
-      amenities: location.amenities || []
+      amenities: location.amenities || [],
+      isPoolPartyAvailable: location.poolPartyConfig?.hasPoolParty || false
     };
     
     setFormData(formattedLocation);
     
-    // Fetch pool party data if available
-    if (location.isPoolPartyAvailable) {
-      try {
-        const poolParty = await getPoolPartyByLocationId(id);
-        if (poolParty) {
-          // Save the pool party ID
-          setPoolPartyId(poolParty._id);
-          
-          // Format pool party timings
-          const formattedTimings = poolParty.timings?.map(timing => ({
-            session: timing.session || 'Custom',
-            startTime: timing.startTime || '',
-            endTime: timing.endTime || '',
-            capacity: timing.capacity?.toString() || '0',
-            pricing: {
-              perAdult: timing.pricing?.perAdult?.toString() || '0',
-              perKid: timing.pricing?.perKid?.toString() || '0'
-            }
-          })) || defaultTimings;
-          
-          setPoolPartyData({
-            timings: formattedTimings
-          });
+    // Load pool party configuration if available
+    if (location.poolPartyConfig?.hasPoolParty) {
+      const poolPartyType = location.poolPartyConfig.poolPartyType;
+      const details = location.poolPartyDetails;
+      
+      console.log('Loading pool party config:', {
+        type: poolPartyType,
+        config: location.poolPartyConfig,
+        details
+      });
+
+      // Helper to map timings
+      const mapTimings = (timings) => (timings || []).map(t => ({
+        session: t.session,
+        startTime: t.startTime,
+        endTime: t.endTime,
+        capacity: t.capacity?.toString() || '',
+        pricing: {
+          perAdult: t.pricing?.perAdult?.toString() || '',
+          perKid: t.pricing?.perKid?.toString() || ''
         }
-      } catch (error) {
-        console.log('No pool party data found for this location:', error.message);
-        // Initialize with default if not found but isPoolPartyAvailable is true
-        setPoolPartyData({
-          timings: defaultTimings.map(timing => ({
-            ...timing,
-            capacity: 0,
-            pricing: { perAdult: 0, perKid: 0 }
-          }))
+      }));
+
+      // Helper to map selected food packages
+      const mapFoodPackages = (packages) => (packages || []).map(pkg => ({
+        foodPackageId: pkg.foodPackageId || pkg._id || pkg.name,
+        name: pkg.name,
+        pricePerAdult: pkg.pricePerAdult || 0,
+        pricePerKid: pkg.pricePerKid || 0,
+        selected: true // already selected because they belong to this pool party
+      }));
+
+      if (poolPartyType === 'shared') {
+        const isCreatedHere = location.poolPartyConfig.isSharedPoolCreatedFromHere || false;
+        setPoolPartyConfig({
+          poolPartyType: 'shared',
+          sharedPoolPartyId: isCreatedHere ? null : details?._id || null,
+          createNewSharedPool: isCreatedHere,
+          createNewPrivatePool: false,
+          isSharedPoolCreatedFromHere: isCreatedHere,
+          newSharedPoolData: {
+            name: details?.name || `${location.name} Shared Pool`,
+            description: details?.description || '',
+            locationName: details?.locationName || location.name,
+            timings: mapTimings(details?.timings),
+            selectedFoodPackages: mapFoodPackages(details?.selectedFoodPackages)
+          }
+        });
+      } else if (poolPartyType === 'private') {
+        setPoolPartyConfig({
+          poolPartyType: 'private',
+          sharedPoolPartyId: null,
+          createNewSharedPool: false,
+          createNewPrivatePool: true,
+          isSharedPoolCreatedFromHere: false,
+          newPrivatePoolData: {
+            name: details?.name || `${location.name} Private Pool`,
+            description: details?.description || '',
+            timings: mapTimings(details?.timings),
+            selectedFoodPackages: mapFoodPackages(details?.selectedFoodPackages)
+          }
+        });
+      } else {
+        // Fallback (none)
+        setPoolPartyConfig({
+          poolPartyType: 'none',
+          sharedPoolPartyId: null,
+          createNewSharedPool: false,
+          createNewPrivatePool: false,
+          isSharedPoolCreatedFromHere: false,
+          newSharedPoolData: {
+            name: '',
+            description: '',
+            locationName: location.name || '',
+            timings: []
+          }
         });
       }
+    } else {
+      // No pool party – reset to defaults
+      setPoolPartyConfig({
+        poolPartyType: 'none',
+        sharedPoolPartyId: null,
+        createNewSharedPool: false,
+        createNewPrivatePool: false,
+        isSharedPoolCreatedFromHere: false,
+        newSharedPoolData: {
+          name: '',
+          description: '',
+          locationName: location.name || '',
+          timings: []
+        }
+      });
     }
     
     toast.success('Location data loaded successfully');
@@ -228,7 +295,7 @@ const fetchLocationData = async () => {
         }
         break;
       case 3:
-        if (!formData.pricing.pricePerAdult) {
+        if (!formData.pricing.pricePerAdultDay) {
           toast.error('Please specify price per adult');
           return false;
         }
@@ -236,7 +303,7 @@ const fetchLocationData = async () => {
       case 4:
         if (formData.isPoolPartyAvailable) {
           // Use the exported validation function from PoolPartyDetails
-          const validationResult = PoolPartyDetails.validateCurrentStep(formData, poolPartyData);
+          const validationResult = PoolPartyDetails.validateCurrentStep(formData, poolPartyConfig);
           
           if (validationResult !== true) {
             if (Array.isArray(validationResult)) {
@@ -253,11 +320,12 @@ const fetchLocationData = async () => {
   };
 
   // Update handleSubmit function
+// In LocationForm.jsx - Update handleSubmit function
 const handleSubmit = async () => {
   try {
     setLoading(true);
     
-    // Prepare location data
+    // Prepare location data with pool party configuration
     const submitData = {
       ...formData,
       capacityOfPersons: parseInt(formData.capacityOfPersons) || 0,
@@ -275,12 +343,68 @@ const handleSubmit = async () => {
         nightStay: Boolean(formData.propertyDetails.nightStay)
       },
       pricing: {
-        pricePerAdult: parseFloat(formData.pricing.pricePerAdult || 0),
-        pricePerKid: parseFloat(formData.pricing.pricePerKid || 0),
-        extraPersonCharge: parseFloat(formData.pricing.extraPersonCharge || 0)
+        extraPersonCharge: parseFloat(formData.pricing.extraPersonCharge || 0),
+        pricePerPersonNight: parseFloat(formData.pricing.pricePerPersonNight || 0),
+        pricePerAdultDay: parseFloat(formData.pricing.pricePerAdultDay || 0),
+        pricePerKidDay: parseFloat(formData.pricing.pricePerKidDay || 0),
+        foodPackages: (formData.pricing.foodPackages || []).map(pkg => ({
+          name: pkg.name || "Food Package",
+          description: pkg.description || "",
+          pricePerAdult: parseFloat(pkg.pricePerAdult) || 0,
+          pricePerKid: parseFloat(pkg.pricePerKid) || 0,
+          isActive: pkg.isActive !== false,
+          packageId: pkg.packageId || `pkg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        }))
       },
-      amenities: formData.amenities || []
+      amenities: formData.amenities || [],
+      poolPartyType: poolPartyConfig.poolPartyType || 'none',
+      sharedPoolPartyId: poolPartyConfig.sharedPoolPartyId || null,
+      createNewSharedPool: poolPartyConfig.createNewSharedPool || false,
+      createNewPrivatePool: poolPartyConfig.createNewPrivatePool || false,
+      isSharedPoolCreatedFromHere: poolPartyConfig.isSharedPoolCreatedFromHere || false,
     };
+
+    // Add new shared pool data if creating new
+    if (poolPartyConfig.createNewSharedPool) {
+      submitData.newSharedPoolData = {
+        name: poolPartyConfig.newSharedPoolData.name || `${formData.name} Shared Pool`,
+        description: poolPartyConfig.newSharedPoolData.description || '',
+        locationName: formData.name,
+        timings: poolPartyConfig.newSharedPoolData.timings.map(timing => ({
+          session: timing.session,
+          startTime: timing.startTime,
+          endTime: timing.endTime,
+          capacity: parseInt(timing.capacity) || 0,
+          pricing: {
+            perAdult: parseFloat(timing.pricing?.perAdult || 0),
+            perKid: parseFloat(timing.pricing?.perKid || 0)
+          }
+        })),
+        // ✅ Only selectedFoodPackages inside newSharedPoolData
+        selectedFoodPackages: poolPartyConfig.newSharedPoolData?.selectedFoodPackages || []
+      };
+    }
+
+    // Add private pool data if creating new
+    if (poolPartyConfig.poolPartyType === 'private' && poolPartyConfig.createNewPrivatePool) {
+      submitData.newPrivatePoolData = {
+        name: poolPartyConfig.newPrivatePoolData?.name || `${formData.name} Private Pool`,
+        description: poolPartyConfig.newPrivatePoolData?.description || '',
+        timings: poolPartyConfig.newPrivatePoolData?.timings?.map(timing => ({
+          session: timing.session,
+          startTime: timing.startTime,
+          endTime: timing.endTime,
+          capacity: parseInt(timing.capacity) || 0,
+          pricing: {
+            perAdult: parseFloat(timing.pricing?.perAdult) || 0,
+            perKid: parseFloat(timing.pricing?.perKid) || 0
+          }
+        })) || [],
+        selectedFoodPackages: poolPartyConfig.newPrivatePoolData?.selectedFoodPackages || []
+      };
+    }
+
+    console.log('Submitting data:', submitData);
 
     let locationId;
     if (id) {
@@ -291,57 +415,6 @@ const handleSubmit = async () => {
       const newLocation = await createLocation(submitData);
       locationId = newLocation._id;
       toast.success('Location created successfully!');
-    }
-
-    // Handle pool party data
-    if (formData.isPoolPartyAvailable && locationId) {
-      // Calculate total capacity from individual session capacities
-      const totalCapacity = poolPartyData.timings.reduce(
-        (sum, timing) => sum + (parseInt(timing.capacity) || 0), 
-        0
-      );
-      
-      // Prepare pool party data
-      const poolPartySubmitData = {
-        locationId: locationId,
-        locationName: formData.name,
-        totalCapacity: totalCapacity,
-        timings: poolPartyData.timings.map(timing => ({
-          session: timing.session,
-          startTime: timing.startTime,
-          endTime: timing.endTime,
-          capacity: parseInt(timing.capacity) || 0,
-          pricing: {
-            perAdult: parseFloat(timing.pricing?.perAdult || 0),
-            perKid: parseFloat(timing.pricing?.perKid || 0)
-          }
-        }))
-      };
-
-      try {
-        if (id && poolPartyId) {
-          // Update existing pool party by its ID
-          await updatePoolParty(poolPartyId, poolPartySubmitData);
-          toast.success('Pool party details updated successfully!');
-        } else {
-          // Create new pool party
-          const newPoolParty = await createPoolParty(poolPartySubmitData);
-          setPoolPartyId(newPoolParty._id);
-          toast.success('Pool party details saved successfully!');
-        }
-      } catch (poolPartyError) {
-        console.error('Error saving pool party:', poolPartyError);
-        toast.error('Failed to save pool party details, but location was saved');
-      }
-    } else if (id && !formData.isPoolPartyAvailable) {
-      // If pool party was disabled, delete existing pool party data
-      try {
-        await deletePoolParty(id);
-        setPoolPartyId(null);
-        console.log('Pool party data removed');
-      } catch (deleteError) {
-        console.log('No pool party data to delete or error deleting:', deleteError.message);
-      }
     }
 
     navigate('/locations');
@@ -398,8 +471,8 @@ const handleSubmit = async () => {
         return (
           <PoolPartyDetails 
             formData={formData}
-            poolPartyData={poolPartyData}
-            setPoolPartyData={setPoolPartyData}
+            poolPartyConfig={poolPartyConfig}
+            setPoolPartyConfig={setPoolPartyConfig}
             isEditing={!!id}
           />
         );
@@ -407,7 +480,7 @@ const handleSubmit = async () => {
         return (
           <ReviewSubmit 
             formData={formData} 
-            poolPartyData={formData.isPoolPartyAvailable ? poolPartyData : null} 
+            poolPartyConfig={formData.isPoolPartyAvailable ? poolPartyConfig : null} 
             isEditing={!!id}
           />
         );

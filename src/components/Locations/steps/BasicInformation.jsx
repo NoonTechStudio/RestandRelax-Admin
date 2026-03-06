@@ -128,4 +128,4 @@ const BasicInformation = ({ formData, setFormData }) => {
   );
 };
 
-export default BasicInformation;
+export default React.memo(BasicInformation);

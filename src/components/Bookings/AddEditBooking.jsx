@@ -1,1468 +1,945 @@
-import React, { useState, useEffect } from 'react';
+// AdminEditBookingPage.jsx – Full admin edit page with corrected payment amount handling
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { 
-  Calendar, 
-  User, 
-  Phone, 
-  MapPin, 
-  Users, 
-  Utensils,
-  Save,
-  ArrowLeft,
-  Home,
-  CheckCircle,
-  XCircle,
-  Clock,
-  Eye,
-  Wallet,
-  AlertCircle,
-  IndianRupee,
-  Lock,
-  Mail
+import toast from 'react-hot-toast';
+import {
+  Calendar, User, Phone, Mail, Home, Clock, Utensils, CreditCard,
+  CheckCircle, AlertCircle, Users, Loader2, ChevronDown, ArrowLeft, Shield, Download
 } from 'lucide-react';
-import LoadingSpinner from '../ui/LoadingSpinner';
-import Toast from '../ui/Toast';
 
-const AddEditBooking = () => {
+// ----------------------------------------------------------------------
+// Helper: extract YYYY‑MM‑DD from ISO string
+const toDateString = (isoString) => isoString.split('T')[0];
+
+// Helper: create UTC Date object from YYYY‑MM‑DD (for calculations)
+const utcDate = (dateStr) => new Date(dateStr + 'T00:00:00Z');
+
+// Helper: format date for display (uses UTC to preserve day)
+const formatDate = (dateStr) => {
+  if (!dateStr) return '';
+  const d = utcDate(dateStr);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+};
+
+// ----------------------------------------------------------------------
+// Main component
+const AdminEditBookingPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const isEditMode = Boolean(id);
   const API_BASE_URL = import.meta.env.VITE_API_CONNECTION_HOST;
 
+  // ---------- State (dates as YYYY-MM-DD strings) ----------
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
-  const [selectedBooking, setSelectedBooking] = useState(null);
-  
+  const [submitting, setSubmitting] = useState(false);
+  const [booking, setBooking] = useState(null);
+  const [locationDetails, setLocationDetails] = useState(null);
+  const [bookedDates, setBookedDates] = useState([]); // string[] in YYYY-MM-DD
+
+  const [checkInDate, setCheckInDate] = useState('');
+  const [checkOutDate, setCheckOutDate] = useState('');
+  const [sameDayCheckout, setSameDayCheckout] = useState(false);
+  const [adults, setAdults] = useState(1);
+  const [kids, setKids] = useState(0);
+  const [showGuestSelector, setShowGuestSelector] = useState(false);
   const [formData, setFormData] = useState({
-    locationId: '',
-    checkInDate: '',
-    checkOutDate: '',
     name: '',
     phone: '',
     email: '',
     address: '',
-    adults: 1,
-    kids: 0,
-    withFood: false,
-    paymentType: 'full',
-    amountPaid: 0,
-    remainingAmount: 0,
-    pricing: {
-      pricePerAdult: 0,
-      pricePerKid: 0,
-      extraPersonCharge: 0,
-      totalPrice: 0
-    },
-    paymentStatus: 'pending'
+    checkInTime: '10:00 AM',
   });
+  const [selectedFoodPackage, setSelectedFoodPackage] = useState(null);
+  const [dailyFoodSelections, setDailyFoodSelections] = useState({});
+  const [showDailySelection, setShowDailySelection] = useState(false);
+  const [activeOffer, setActiveOffer] = useState(null);
+  const [offerLoading, setOfferLoading] = useState(false);
+  const [paymentType, setPaymentType] = useState('token');
+  const [manualAmountPaid, setManualAmountPaid] = useState('');
+  const [updateResult, setUpdateResult] = useState(null);
+  const [step, setStep] = useState('booking'); // 'booking' | 'confirmation'
 
-  const [locations, setLocations] = useState([]);
-  const [bookedDates, setBookedDates] = useState([]);
-  const [locationsLoading, setLocationsLoading] = useState(false);
-  const [calculatingPrice, setCalculatingPrice] = useState(false);
-  const [selectedLocationDetails, setSelectedLocationDetails] = useState(null);
+  // ---------- Derived values (using UTC dates) ----------
+  const totalGuests = adults + kids;
 
+  const nights = useMemo(() => {
+    if (!checkInDate || !checkOutDate || sameDayCheckout) return 0;
+    const start = utcDate(checkInDate);
+    const end = utcDate(checkOutDate);
+    return Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+  }, [checkInDate, checkOutDate, sameDayCheckout]);
+
+  const days = useMemo(() => {
+    if (!checkInDate) return 0;
+    if (sameDayCheckout) return 1;
+    if (!checkOutDate) return 1;
+    const start = utcDate(checkInDate);
+    const end = utcDate(checkOutDate);
+    return Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+  }, [checkInDate, checkOutDate, sameDayCheckout]);
+
+  // Price calculation (identical to create page)
+  const getBasePricing = useCallback(() => {
+    if (activeOffer && activeOffer.locationPricing) return activeOffer.locationPricing;
+    return locationDetails?.pricing || {};
+  }, [activeOffer, locationDetails]);
+
+  const getFoodPackages = useCallback(() => {
+    if (activeOffer && activeOffer.locationPricing?.foodPackages) {
+      return activeOffer.locationPricing.foodPackages.filter(
+        pkg => pkg.locationId === locationDetails?._id
+      );
+    }
+    return locationDetails?.pricing?.foodPackages || [];
+  }, [activeOffer, locationDetails]);
+
+  const calculateFoodPrice = useCallback(() => {
+    if (!selectedFoodPackage) return 0;
+    const packages = getFoodPackages();
+    if (sameDayCheckout) {
+      return selectedFoodPackage.pricePerAdult * adults + selectedFoodPackage.pricePerKid * kids;
+    }
+    if (Object.keys(dailyFoodSelections).length > 0) {
+      let total = 0;
+      Object.values(dailyFoodSelections).forEach(pkgId => {
+        if (pkgId) {
+          const pkg = packages.find(p => p.foodPackageId === pkgId || p._id === pkgId);
+          if (pkg) total += pkg.pricePerAdult * adults + pkg.pricePerKid * kids;
+        }
+      });
+      return total;
+    }
+    const daysVal = days;
+    const foodDays = sameDayCheckout ? daysVal : daysVal + 1;
+    return (selectedFoodPackage.pricePerAdult * adults + selectedFoodPackage.pricePerKid * kids) * foodDays;
+  }, [selectedFoodPackage, getFoodPackages, sameDayCheckout, adults, kids, dailyFoodSelections, days]);
+
+  const calculateTotalPrice = useCallback(() => {
+    if (!checkInDate || !locationDetails?.pricing) return 0;
+    const basePricing = getBasePricing();
+    const capacity = locationDetails.capacityOfPersons || 0;
+    const isNightStayAvailable = locationDetails.propertyDetails?.nightStay === true && !sameDayCheckout;
+    const daysVal = days;
+    const nightsVal = isNightStayAvailable ? nights : 0;
+
+    const perNightRate = basePricing.pricePerPersonNight || 0;
+    const nightPrice = perNightRate > 0 && nightsVal > 0 ? perNightRate * totalGuests * nightsVal : 0;
+
+    const dayAdultRate = basePricing.pricePerAdultDay || 0;
+    const dayKidRate = basePricing.pricePerKidDay || 0;
+    const dayPrice = dayAdultRate * adults * daysVal + dayKidRate * kids * daysVal;
+
+    let extraCharge = 0;
+    if (capacity && totalGuests > capacity) {
+      const extraGuests = totalGuests - capacity;
+      const extraRate = basePricing.extraPersonCharge || 0;
+      const extraMultiplier = isNightStayAvailable ? Math.max(nightsVal, daysVal) : daysVal;
+      extraCharge = extraGuests * extraRate * extraMultiplier;
+    }
+
+    const foodPrice = calculateFoodPrice();
+    return nightPrice + dayPrice + extraCharge + foodPrice;
+  }, [checkInDate, locationDetails, getBasePricing, adults, kids, sameDayCheckout, totalGuests, days, nights, calculateFoodPrice]);
+
+  const totalPrice = useMemo(() => calculateTotalPrice(), [calculateTotalPrice]);
+  const tokenAmount = useMemo(() => Math.round((totalPrice * 0.5) / 100) * 100, [totalPrice]);
+  const remainingAmount = useMemo(() => Math.max(0, totalPrice - (parseFloat(manualAmountPaid) || 0)), [totalPrice, manualAmountPaid]);
+
+  // ✅ Only update manualAmountPaid when paymentType changes (not on totalPrice changes)
+  // This preserves the existing paid amount while editing dates/guests
   useEffect(() => {
-    const initializeData = async () => {
-      await fetchLocations();
-      if (isEditMode) {
-        await fetchBooking();
-      } else {
+    if (paymentType === 'full') {
+      setManualAmountPaid(totalPrice.toString());
+    } else {
+      setManualAmountPaid(tokenAmount.toString());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentType]); // totalPrice and tokenAmount removed intentionally
+
+  // --------------------------------------------------------------------
+  // Fetch booking details
+  useEffect(() => {
+    const fetchBooking = async () => {
+      try {
+        setLoading(true);
+        const res = await fetch(`${API_BASE_URL}/bookings/${id}`);
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Booking not found');
+        const b = data.booking;
+
+        setBooking(b);
+        const locationId = b.location?._id || b.location;
+        if (locationId) {
+          const locRes = await fetch(`${API_BASE_URL}/locations/${locationId}`);
+          const locData = await locRes.json();
+          setLocationDetails(locData);
+
+          // Fetch booked dates and exclude current booking's dates
+          const bookedRes = await fetch(`${API_BASE_URL}/bookings/dates/${locationId}`);
+          const bookedData = await bookedRes.json();
+          if (bookedData.success) {
+            const currentDates = [];
+            const start = b.checkInDate.split('T')[0];
+            const end = b.checkOutDate.split('T')[0];
+            let current = new Date(utcDate(start));
+            const endDate = new Date(utcDate(end));
+            while (current <= endDate) {
+              const y = current.getUTCFullYear();
+              const m = String(current.getUTCMonth() + 1).padStart(2, '0');
+              const d = String(current.getUTCDate()).padStart(2, '0');
+              currentDates.push(`${y}-${m}-${d}`);
+              current.setUTCDate(current.getUTCDate() + 1);
+            }
+            const filtered = bookedData.bookedDates.filter(d => !currentDates.includes(d));
+            setBookedDates(filtered);
+          }
+        }
+
+        // Populate form
+        setCheckInDate(toDateString(b.checkInDate));
+        setCheckOutDate(toDateString(b.checkOutDate));
+        setSameDayCheckout(b.sameDayCheckout || false);
+        setAdults(b.adults || 1);
+        setKids(b.kids || 0);
+        setFormData({
+          name: b.name || '',
+          phone: b.phone || '',
+          email: b.email || '',
+          address: b.address || '',
+          checkInTime: b.checkInTime || '10:00 AM',
+        });
+        setPaymentType(b.paymentType || 'token');
+        setManualAmountPaid((b.amountPaid || 0).toString());
+
+        if (b.withFood && b.foodPackage) {
+          setSelectedFoodPackage({
+            id: b.foodPackage.packageId || b.foodPackage._id,
+            name: b.foodPackage.name,
+            pricePerAdult: b.foodPackage.pricePerAdult,
+            pricePerKid: b.foodPackage.pricePerKid,
+          });
+        }
+
+        if (b.dailyFoodPackages && b.dailyFoodPackages.length > 0) {
+          const selections = {};
+          b.dailyFoodPackages.forEach(day => {
+            selections[toDateString(day.date)] = day.packageId;
+          });
+          setDailyFoodSelections(selections);
+        }
+      } catch (err) {
+        console.error(err);
+        toast.error('Failed to load booking');
+        navigate('/admin/bookings');
+      } finally {
         setLoading(false);
       }
     };
-    
-    initializeData();
-  }, [id]);
+    fetchBooking();
+  }, [id, API_BASE_URL, navigate]);
+
+  // Fetch active offer when check-in date changes
+  const fetchActiveOffer = useCallback(async () => {
+    if (!locationDetails?._id || !checkInDate) {
+      setActiveOffer(null);
+      return;
+    }
+    setOfferLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/offers/active/location?locationId=${locationDetails._id}&bookingDate=${checkInDate}`
+      );
+      const data = await res.json();
+      if (data.success && data.data.length > 0) {
+        setActiveOffer(data.data[0]);
+      } else {
+        setActiveOffer(null);
+      }
+    } catch (err) {
+      console.error('Offer fetch error', err);
+      setActiveOffer(null);
+    } finally {
+      setOfferLoading(false);
+    }
+  }, [locationDetails, checkInDate, API_BASE_URL]);
 
   useEffect(() => {
-    if (formData.locationId && locations.length > 0) {
-      fetchBookedDates(formData.locationId);
-      // Get location details for nightStay property
-      const location = locations.find(loc => loc._id === formData.locationId);
-      console.log('Setting selected location details:', location);
-      setSelectedLocationDetails(location);
-    }
-  }, [formData.locationId, locations]);
+    fetchActiveOffer();
+  }, [fetchActiveOffer]);
 
-  // Auto-calculate price when location, dates, or guests change (only for new bookings)
-  useEffect(() => {
-    console.log('🚀 Price calculation effect triggered:', {
-      isEditMode,
-      locationId: formData.locationId,
-      checkInDate: formData.checkInDate,
-      checkOutDate: formData.checkOutDate,
-      adults: formData.adults,
-      kids: formData.kids,
-      withFood: formData.withFood,
-      selectedLocationDetails: selectedLocationDetails
-    });
-    
-    if (!isEditMode && formData.locationId && formData.checkInDate && selectedLocationDetails) {
-      console.log('✅ Calling calculatePrice function');
-      calculatePrice();
-    }
-  }, [formData.locationId, formData.checkInDate, formData.checkOutDate, formData.adults, formData.kids, formData.withFood, isEditMode, selectedLocationDetails]);
-
-  const fetchLocations = async () => {
-    try {
-      setLocationsLoading(true);
-      const response = await fetch(`${API_BASE_URL}/locations`);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch locations: ${response.status}`);
-      }
-      
-      const result = await response.json();
-      
-      let locationsData = [];
-      if (result.success && Array.isArray(result.locations)) {
-        locationsData = result.locations;
-      } else if (Array.isArray(result)) {
-        locationsData = result;
-      } else if (result.data && Array.isArray(result.data)) {
-        locationsData = result.data;
-      }
-      
-      console.log('📋 Loaded locations:', locationsData);
-      console.log('📊 Sample location pricing:', locationsData[0]?.pricing);
-      
-      setLocations(locationsData);
-      
-      if (locationsData.length === 0) {
-        showToast('No locations available. Please add locations first.', 'warning');
-      }
-      
-    } catch (error) {
-      console.error('Error fetching locations:', error);
-      showToast('Failed to load locations. Please check if locations API is available.', 'error');
-      setLocations([]);
-    } finally {
-      setLocationsLoading(false);
-    }
-  };
-
-  const fetchBooking = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/bookings/${id}`);
-      const data = await response.json();
-      
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to load booking');
-      }
-      
-      const booking = data.booking;
-      
-      // Handle location ID - it could be an object (populated) or string ID
-      const locationId = booking.location?._id || booking.location;
-      
-      // Get location details to check nightStay property
-      const locationRes = await fetch(`${API_BASE_URL}/locations/${locationId}`);
-      const locationData = await locationRes.json();
-      setSelectedLocationDetails(locationData);
-
-      setFormData({
-        locationId: locationId || '',
-        checkInDate: booking.checkInDate ? new Date(booking.checkInDate).toISOString().split('T')[0] : '',
-        checkOutDate: booking.checkOutDate ? new Date(booking.checkOutDate).toISOString().split('T')[0] : '',
-        name: booking.name || '',
-        phone: booking.phone || '',
-        email: booking.email || '', 
-        address: booking.address || '',
-        adults: booking.adults || 1,
-        kids: booking.kids || 0,
-        withFood: booking.withFood || false,
-        paymentType: booking.paymentType || 'full',
-        amountPaid: booking.amountPaid || 0,
-        remainingAmount: booking.remainingAmount || 0,
-        pricing: {
-          pricePerAdult: booking.pricing?.pricePerAdult || 0,
-          pricePerKid: booking.pricing?.pricePerKid || 0,
-          extraPersonCharge: booking.pricing?.extraPersonCharge || 0,
-          totalPrice: booking.pricing?.totalPrice || 0
-        },
-        paymentStatus: booking.paymentStatus || 'pending'
-      });
-      
-    } catch (error) {
-      console.error('Error fetching booking:', error);
-      showToast('Failed to load booking details', 'error');
-      navigate('/bookings');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchBookedDates = async (locationId) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/bookings/dates/${locationId}`);
-      const data = await response.json();
-      if (data.success) {
-        // Extract date strings from booked dates
-        const dates = data.bookedDates.map(bd => {
-          if (typeof bd.date === 'string') {
-            return bd.date.split('T')[0];
-          } else {
-            return new Date(bd.date).toISOString().split('T')[0];
-          }
-        });
-        setBookedDates(dates);
-      }
-    } catch (error) {
-      console.error('Error fetching booked dates:', error);
-      setBookedDates([]);
-    }
-  };
-
-  // Check if a specific date is booked
-  const isDateBooked = (dateString) => {
-    return bookedDates.includes(dateString);
-  };
-
-  // FIXED: Check if any date in a range is booked (INCLUDING check-out date)
-  const isDateRangeBooked = (startDate, endDate) => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const currentDate = new Date(start);
-    
-    // Include the end date in the check by using <=
-    while (currentDate <= end) {
-      const dateString = currentDate.toISOString().split('T')[0];
-      if (isDateBooked(dateString)) {
-        return true;
-      }
-      currentDate.setDate(currentDate.getDate() + 1);
+  // --------------------------------------------------------------------
+  // Conflict check (using strings)
+  const hasDateConflict = useMemo(() => {
+    if (!checkInDate || !checkOutDate || bookedDates.length === 0) return false;
+    const start = utcDate(checkInDate);
+    const end = utcDate(checkOutDate);
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      const key = `${y}-${m}-${day}`;
+      if (bookedDates.includes(key)) return true;
     }
     return false;
-  };
+  }, [checkInDate, checkOutDate, bookedDates]);
 
-  // Get the minimum selectable date for check-out
-  const getMinCheckoutDate = () => {
-    if (!formData.checkInDate) return new Date().toISOString().split('T')[0];
-    
-    const nextDay = new Date(formData.checkInDate);
-    nextDay.setDate(nextDay.getDate() + 1);
-    return nextDay.toISOString().split('T')[0];
-  };
-
-  // Check if a date should be disabled in the date picker
-  const isDateDisabled = (dateString) => {
-    const date = new Date(dateString);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    // Disable past dates and booked dates
-    return date < today || isDateBooked(dateString);
-  };
-
-  const calculatePrice = async () => {
-    if (!formData.locationId || !formData.checkInDate) {
-      console.log('❌ Cannot calculate price: missing locationId or checkInDate');
-      return;
-    }
-
-    try {
-      setCalculatingPrice(true);
-      
-      console.log('🔍 Available locations:', locations);
-      console.log('🔍 Looking for location with ID:', formData.locationId);
-      
-      const selectedLocation = locations.find(loc => loc._id === formData.locationId);
-      
-      console.log('🎯 Selected location for pricing calculation:', selectedLocation);
-      
-      if (!selectedLocation) {
-        console.error('❌ Selected location not found in locations array');
-        return;
-      }
-
-      const nights = calculateNights();
-      
-      console.log('📅 Nights calculation:', {
-        checkInDate: formData.checkInDate,
-        checkOutDate: formData.checkOutDate,
-        nights
-      });
-      
-      // For day picnic (nightStay: false), nights should be 0
-      const isDayPicnic = selectedLocation.propertyDetails?.nightStay === false;
-      const effectiveNights = isDayPicnic ? 0 : (nights > 0 ? nights : 1);
-      
-      // IMPORTANT: For day picnic, effectiveNights should be 1, not 0
-      // Day picnic is 1 day (same day checkout)
-      const finalNights = isDayPicnic ? 1 : effectiveNights;
-
-      console.log('🎪 Day picnic status:', {
-        isDayPicnic,
-        nightStay: selectedLocation.propertyDetails?.nightStay,
-        effectiveNights,
-        finalNights
-      });
-
-      // Calculate base price - IMPORTANT FIX HERE
-      const pricePerAdult = selectedLocation.pricing?.pricePerAdult || 1000;
-      const pricePerKid = selectedLocation.pricing?.pricePerKid || 500;
-      
-      console.log('💰 Pricing values:', {
-        pricePerAdult,
-        pricePerKid,
-        adults: formData.adults,
-        kids: formData.kids,
-        finalNights
-      });
-
-      const adultPrice = pricePerAdult * formData.adults * finalNights;
-      const kidPrice = pricePerKid * formData.kids * finalNights;
-      
-      const totalPrice = adultPrice + kidPrice;
-
-      console.log('🧮 Price calculations:', {
-        adultPrice,
-        kidPrice,
-        totalPrice,
-        finalNights,
-        calculation: `(${pricePerAdult} × ${formData.adults} × ${finalNights}) + (${pricePerKid} × ${formData.kids} × ${finalNights}) = ${totalPrice}`
-      });
-
-      // Auto-calculate remaining amount based on payment type
-      let amountPaid = formData.amountPaid;
-      let remainingAmount = formData.remainingAmount;
-
-      if (formData.paymentType === 'full') {
-        amountPaid = totalPrice;
-        remainingAmount = 0;
-      } else if (formData.paymentType === 'token' && formData.amountPaid === 0) {
-        // Default token amount for new bookings
-        amountPaid = Math.min(3000, totalPrice);
-        remainingAmount = totalPrice - amountPaid;
-      }
-
-      console.log('💳 Payment calculations:', {
-        amountPaid,
-        remainingAmount,
-        paymentType: formData.paymentType
-      });
-
-      setFormData(prev => ({
-        ...prev,
-        pricing: {
-          pricePerAdult,
-          pricePerKid,
-          extraPersonCharge: selectedLocation.pricing?.extraPersonCharge || 0,
-          totalPrice
-        },
-        amountPaid,
-        remainingAmount
-      }));
-
-    } catch (error) {
-      console.error('❌ Error calculating price:', error);
-    } finally {
-      setCalculatingPrice(false);
-    }
-  };
-
-  const showToast = (message, type = 'success') => {
-    setToast({ show: true, message, type });
-    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 5000);
-  };
-
-  const handleChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    
-    console.log('📝 Form field changed:', { name, value, type, checked });
-    
-    // Only allow editing name, phone, and address in edit mode
-    if (isEditMode && !['name', 'phone', 'address', 'email'].includes(name)) {
-      return;
-    }
-    
-    if (name.includes('.')) {
-      const [parent, child] = name.split('.');
-      setFormData(prev => ({
-        ...prev,
-        [parent]: {
-          ...prev[parent],
-          [child]: type === 'number' ? parseFloat(value) || 0 : value
-        }
-      }));
-    } else {
-      const newValue = type === 'checkbox' ? checked : 
-                      type === 'number' ? parseInt(value) || 0 : value;
-      
-      const updatedFormData = {
-        ...formData,
-        [name]: newValue
-      };
-      
-      setFormData(updatedFormData);
-
-      // Recalculate remaining amount when payment type changes (only for new bookings)
-      if (!isEditMode && name === 'paymentType') {
-        setTimeout(() => {
-          setFormData(prev => {
-            if (newValue === 'full') {
-              return {
-                ...prev,
-                amountPaid: prev.pricing.totalPrice,
-                remainingAmount: 0
-              };
-            } else if (newValue === 'token' && prev.amountPaid === prev.pricing.totalPrice) {
-              // Set default token amount
-              const tokenAmount = Math.min(3000, prev.pricing.totalPrice);
-              return {
-                ...prev,
-                amountPaid: tokenAmount,
-                remainingAmount: prev.pricing.totalPrice - tokenAmount
-              };
-            }
-            return prev;
-          });
-        }, 0);
-      }
-
-      // For day picnic: automatically set checkout to same as check-in
-      if (!isEditMode && name === 'checkInDate' && selectedLocationDetails?.propertyDetails?.nightStay === false) {
-        console.log('🔄 Setting checkout date to same as check-in for day picnic');
-        setFormData(prev => ({
-          ...prev,
-          checkOutDate: value
-        }));
-      }
-      
-      // For night stay: if check-in date changes and check-out date is before it, reset check-out date
-      if (!isEditMode && name === 'checkInDate' && 
-          formData.checkOutDate && value > formData.checkOutDate &&
-          selectedLocationDetails?.propertyDetails?.nightStay !== false) {
-        console.log('🔄 Resetting checkout date because check-in is after checkout');
-        setFormData(prev => ({
-          ...prev,
-          checkOutDate: ''
-        }));
-      }
-    }
-  };
-
-  const handleAmountPaidChange = (e) => {
-    // Only allow amount changes for new bookings
-    if (isEditMode) return;
-    
-    const amountPaid = parseFloat(e.target.value) || 0;
-    const remainingAmount = Math.max(0, formData.pricing.totalPrice - amountPaid);
-    
-    setFormData(prev => ({
-      ...prev,
-      amountPaid,
-      remainingAmount
-    }));
-  };
-
-  const calculateNights = () => {
-    if (formData.checkInDate && formData.checkOutDate) {
-      const start = new Date(formData.checkInDate);
-      const end = new Date(formData.checkOutDate);
-      const nights = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
-      return nights > 0 ? nights : 0;
-    }
-    return 0;
-  };
-
-  const validateForm = () => {
-    if (!formData.locationId) {
-      showToast('Please select a location', 'error');
-      return false;
-    }
-
-    if (!formData.checkInDate) {
-      showToast('Please select check-in date', 'error');
-      return false;
-    }
-
-    const checkIn = new Date(formData.checkInDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    if (checkIn < today) {
-      showToast('Check-in date cannot be in the past', 'error');
-      return false;
-    }
-
-    // For night stay: validate check-out date
-    if (selectedLocationDetails?.propertyDetails?.nightStay !== false) {
-      if (!formData.checkOutDate) {
-        showToast('Please select check-out date', 'error');
-        return false;
-      }
-
-      const checkOut = new Date(formData.checkOutDate);
-      
-      if (checkIn >= checkOut) {
-        showToast('Check-out date must be after check-in date', 'error');
-        return false;
-      }
-
-      // Check if any dates in the range are booked (only for new bookings)
-      // FIXED: Now properly includes check-out date in the range check
-      if (!isEditMode && isDateRangeBooked(formData.checkInDate, formData.checkOutDate)) {
-        showToast('Some selected dates are already booked. Please select different dates.', 'error');
-        return false;
-      }
-    }
-
-    if (!formData.name.trim()) {
-      showToast('Guest name is required', 'error');
-      return false;
-    }
-
-    if (!formData.phone.trim()) {
-      showToast('Phone number is required', 'error');
-      return false;
-    }
-
-    if (!formData.email.trim()) {
-      showToast('Email address is required for payment confirmation', 'error');
-      return false;
-    }
-
-    // Basic email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(formData.email)) {
-      showToast('Please enter a valid email address', 'error');
-      return false;
-    }
-
-    if (!formData.address.trim()) {
-      showToast('Address is required', 'error');
-      return false;
-    }
-
-    if (formData.adults < 1) {
-      showToast('At least one adult is required', 'error');
-      return false;
-    }
-
-    if (formData.pricing.totalPrice < 0) {
-      showToast('Total price cannot be negative', 'error');
-      return false;
-    }
-
-    if (formData.amountPaid < 0 || formData.remainingAmount < 0) {
-      showToast('Payment amounts cannot be negative', 'error');
-      return false;
-    }
-
-    if (formData.amountPaid + formData.remainingAmount !== formData.pricing.totalPrice) {
-      showToast('Paid amount + remaining amount must equal total price', 'error');
-      return false;
-    }
-
+  // --------------------------------------------------------------------
+  // Form validation
+  const isFormValid = useMemo(() => {
+    if (!locationDetails) return false;
+    if (!checkInDate) return false;
+    if (!sameDayCheckout && !checkOutDate) return false;
+    if (hasDateConflict) return false;
+    if (!formData.name.trim()) return false;
+    if (!/^\d{10}$/.test(formData.phone)) return false;
+    if (!formData.email || !/\S+@\S+\.\S+/.test(formData.email)) return false;
+    if (!formData.address.trim()) return false;
+    if (totalGuests > (locationDetails.capacityOfPersons || Infinity)) return false;
     return true;
-  };
+  }, [locationDetails, checkInDate, checkOutDate, sameDayCheckout, hasDateConflict, formData, totalGuests]);
 
-  const handleSubmit = async (e) => {
+  // --------------------------------------------------------------------
+  // Update handler
+  const handleUpdate = async (e) => {
     e.preventDefault();
-    
-    if (!validateForm()) return;
+    if (!isFormValid) {
+      toast.error('Please fill all required fields correctly');
+      return;
+    }
 
-    setSaving(true);
+    setSubmitting(true);
+
+    const dailyPackages = Object.entries(dailyFoodSelections)
+      .filter(([_, pkgId]) => pkgId)
+      .map(([date, pkgId]) => ({ date, packageId: pkgId }));
+
+    const payload = {
+      checkInDate,
+      checkOutDate: sameDayCheckout ? checkInDate : checkOutDate,
+      checkInTime: formData.checkInTime,
+      name: formData.name.trim(),
+      phone: formData.phone.trim(),
+      email: formData.email.trim(),
+      address: formData.address.trim(),
+      adults,
+      kids,
+      withFood: !!selectedFoodPackage,
+      foodPackageId: selectedFoodPackage?.id || null,
+      dailyFoodSelections: dailyPackages,
+      paymentType,
+      amountPaid: parseFloat(manualAmountPaid) || 0,
+      remainingAmount: Math.max(0, totalPrice - (parseFloat(manualAmountPaid) || 0)),
+      sameDayCheckout,
+    };
 
     try {
-      let response;
-      
-      // In edit mode, only send name, phone, and address
-      const payload = isEditMode ? {
-        name: formData.name,
-        phone: formData.phone,
-        email: formData.email,
-        address: formData.address
-      } : {
-        ...formData,
-        email: formData.email,
-        checkInDate: new Date(formData.checkInDate).toISOString(),
-        // For day picnic, checkOutDate is same as checkInDate
-        checkOutDate: selectedLocationDetails?.propertyDetails?.nightStay === false 
-          ? new Date(formData.checkInDate).toISOString()
-          : new Date(formData.checkOutDate).toISOString()
-      };
-
-      if (isEditMode) {
-        response = await fetch(`${API_BASE_URL}/bookings/${id}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
-      } else {
-        response = await fetch(`${API_BASE_URL}/bookings`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
-      }
-
-      const data = await response.json();
-
+      const res = await fetch(`${API_BASE_URL}/bookings/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
       if (data.success) {
-        showToast(isEditMode ? 'Booking updated successfully!' : 'Booking created successfully!', 'success');
-        setSelectedBooking(data.booking);
-
-        // Redirect to bookings list after successful creation
-        if (!isEditMode) {
-          setTimeout(() => {
-            navigate('/bookings');
-          }, 1500);
-        }
+        setUpdateResult(data.booking);
+        setStep('confirmation');
+        toast.success('Booking updated successfully');
       } else {
-        throw new Error(data.error || (isEditMode ? 'Failed to update booking' : 'Failed to create booking'));
+        toast.error(data.error || 'Failed to update booking');
       }
-
-    } catch (error) {
-      console.error('Booking submission error:', error);
-      const errorMessage = error.message || 
-        (isEditMode ? 'Failed to update booking' : 'Failed to create booking');
-      showToast(errorMessage, 'error');
+    } catch (err) {
+      toast.error('Network error');
     } finally {
-      setSaving(false);
+      setSubmitting(false);
     }
   };
 
-  const getPaymentStatusBadge = () => {
-    const statusConfig = {
-      pending: { color: 'bg-yellow-100 text-yellow-800', icon: Clock, label: 'Pending' },
-      paid: { color: 'bg-green-100 text-green-800', icon: CheckCircle, label: 'Paid' },
-      failed: { color: 'bg-red-100 text-red-800', icon: XCircle, label: 'Failed' },
-      partially_paid: { color: 'bg-orange-100 text-orange-800', icon: AlertCircle, label: 'Partial Paid' }
-    };
-    
-    const config = statusConfig[formData.paymentStatus] || statusConfig.pending;
-    const Icon = config.icon;
-    
-    return (
-      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${config.color}`}>
-        <Icon className="w-4 h-4 mr-1" />
-        {config.label}
-      </span>
-    );
+  // --------------------------------------------------------------------
+  // PDF download
+  const downloadPDF = async (bookingId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/bookings/${bookingId}/download-pdf`);
+      if (!response.ok) throw new Error('Failed to download PDF');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `booking-confirmation-${bookingId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('PDF download failed:', error);
+      toast.error('Failed to download PDF. Please try again.');
+    }
   };
 
-  const getPaymentTypeBadge = () => {
-    const typeConfig = {
-      full: { color: 'bg-blue-100 text-blue-800', label: 'Full Payment' },
-      token: { color: 'bg-purple-100 text-purple-800', label: 'Token Payment' }
-    };
-    
-    const config = typeConfig[formData.paymentType] || typeConfig.full;
-    
-    return (
-      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${config.color}`}>
-        <Wallet className="w-4 h-4 mr-1" />
-        {config.label}
-      </span>
-    );
-  };
-
-  const getLocationName = (locationId) => {
-    const location = locations.find(loc => loc._id === locationId);
-    return location ? `${location.name} - ${location.address?.city || location.city}` : 'Unknown Location';
-  };
-
-  const nights = calculateNights();
-  const isFormValid = formData.locationId && formData.checkInDate && 
-                     ((selectedLocationDetails?.propertyDetails?.nightStay === false) || formData.checkOutDate) &&
-                     formData.name && formData.phone && formData.address && 
-                     formData.adults >= 1 && formData.pricing.totalPrice >= 0;
-
-  const PaymentBreakdown = () => {
-    console.log('🧾 PaymentBreakdown rendering with:', {
-      totalPrice: formData.pricing.totalPrice,
-      amountPaid: formData.amountPaid,
-      remainingAmount: formData.remainingAmount
-    });
-    
-    return (
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2">
-        <div className="flex justify-between items-center">
-          <span className="text-sm font-medium text-gray-700">Total Amount:</span>
-          <span className="text-lg font-bold text-gray-900">
-            ₹{formData.pricing.totalPrice.toLocaleString()}
-          </span>
-        </div>
-        
-        <div className="flex justify-between items-center">
-          <span className="text-sm text-gray-600">Amount Paid:</span>
-          <span className="font-medium text-green-600">₹{formData.amountPaid.toLocaleString()}</span>
-        </div>
-        
-        <div className="flex justify-between items-center">
-          <span className="text-sm text-gray-600">Remaining Amount:</span>
-          <span className={`font-medium ${
-            formData.remainingAmount > 0 ? 'text-orange-600' : 'text-green-600'
-          }`}>
-            ₹{formData.remainingAmount.toLocaleString()}
-          </span>
-        </div>
-        
-        <div className="pt-2 border-t border-gray-200">
-          {getPaymentTypeBadge()}
-        </div>
-      </div>
-    );
-  };
-
-  // Custom date input component with booked dates highlighted in green
-  const DateInput = ({ label, name, value, minDate, onChange, disabled = false, showCheckoutText = false }) => (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-2">
-        {label} *
-      </label>
-      <div className="relative">
-        <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-        <input
-          type="date"
-          name={name}
-          value={value}
-          onChange={onChange}
-          required
-          min={minDate}
-          disabled={disabled || isEditMode}
-          className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
-        />
-      </div>
-      {value && isDateBooked(value) && (
-        <p className="text-xs text-green-600 mt-1 flex items-center">
-          <CheckCircle className="w-3 h-3 mr-1" />
-          This date is booked
-        </p>
-      )}
-      {showCheckoutText && (
-        <p className="text-xs text-gray-500 mt-1">
-          Checkout: Same day ({value ? new Date(value).toLocaleDateString() : 'Select check-in date'})
-        </p>
-      )}
-    </div>
-  );
-
-  // Booked Dates Display Component
-  const BookedDatesDisplay = () => {
-    if (bookedDates.length === 0) return null;
-
-    return (
-      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-        <div className="flex items-center mb-2">
-          <CheckCircle className="w-4 h-4 text-green-600 mr-2" />
-          <h3 className="text-sm font-medium text-green-800">Booked Dates at this Location</h3>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {bookedDates.slice(0, 10).map((date, index) => (
-            <span
-              key={index}
-              className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200"
-            >
-              {new Date(date).toLocaleDateString()}
-            </span>
-          ))}
-          {bookedDates.length > 10 && (
-            <span className="text-xs text-green-600">
-              +{bookedDates.length - 10} more dates
-            </span>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  // Locked Section Component
-  const LockedSection = ({ title, icon: Icon, children }) => (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 opacity-75">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-        <Icon className="w-5 h-5 mr-2 text-gray-400" />
-        {title}
-        <Lock className="w-4 h-4 ml-2 text-gray-400" />
-        <span className="ml-2 text-sm font-normal text-gray-500 italic">
-          (Locked in edit mode)
-        </span>
-      </h2>
-      <div className="space-y-4 opacity-60">
-        {children}
-      </div>
-    </div>
-  );
-
+  // --------------------------------------------------------------------
+  // Loading
   if (loading) {
     return (
-      <div className="flex justify-center items-center min-h-64">
-        <LoadingSpinner size="lg" />
-        <span className="ml-3 text-gray-600">Loading booking details...</span>
+      <div className="min-h-screen bg-gray-50 py-8 px-4 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
       </div>
     );
   }
 
-  return (
-    <div className="max-w-7xl mx-auto space-y-6">
-      {toast.show && (
-        <Toast 
-          message={toast.message} 
-          type={toast.type} 
-          onClose={() => setToast({ ...toast, show: false })} 
-        />
-      )}
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">          
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              {isEditMode ? 'Edit Booking' : 'Create New Booking'}
-            </h1>
-            <p className="text-gray-600 mt-1">
-              {isEditMode ? 'Update guest contact information' : 'Add a new reservation'}
-            </p>
-          </div>
-        </div>
-        
-        {isEditMode && (
-          <div className="flex items-center space-x-3">
-            {getPaymentStatusBadge()}
-            <button
-              onClick={() => navigate(`/bookings/${id}`)}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors"
-            >
-              <Eye className="w-4 h-4 mr-2" />
-              View Details
-            </button>
-          </div>
-        )}
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left Column - Location & Dates */}
-          <div className="space-y-6">
-            {/* Location Selection - Show as locked in edit mode */}
-            {isEditMode ? (
-              <LockedSection title="Location & Dates" icon={Home}>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Select Location *
-                    </label>
-                    <select
-                      name="locationId"
-                      value={formData.locationId}
-                      onChange={handleChange}
-                      required
-                      disabled
-                      className="w-full px-3 py-3 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
-                    >
-                      <option value="">Choose a location</option>
-                      {locations.map(location => (
-                        <option key={location._id} value={location._id}>
-                          {location.name} - {location.address?.city || location.city || 'Unknown City'}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Current: {getLocationName(formData.locationId)}
-                    </p>
+  // --------------------------------------------------------------------
+  // Confirmation step
+  if (step === 'confirmation' && updateResult) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-md mx-auto">
+          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+            <div className="p-6">
+              <div className="text-center">
+                <div className="flex justify-center mb-4">
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-green-100 rounded-full animate-ping opacity-75"></div>
+                    <CheckCircle className="h-12 w-12 text-green-500 relative z-10" />
                   </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <DateInput
-                      label="Check-in Date"
-                      name="checkInDate"
-                      value={formData.checkInDate}
-                      minDate={new Date().toISOString().split('T')[0]}
-                      onChange={handleChange}
-                      disabled={true}
-                    />
-
-                    {/* Show checkout input only for night stays, show text for day picnic */}
-                    {selectedLocationDetails?.propertyDetails?.nightStay !== false ? (
-                      <DateInput
-                        label="Check-out Date"
-                        name="checkOutDate"
-                        value={formData.checkOutDate}
-                        minDate={getMinCheckoutDate()}
-                        onChange={handleChange}
-                        disabled={true}
-                      />
-                    ) : (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Check-out Date
-                        </label>
-                        <div className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-gray-100">
-                          <div className="flex items-center">
-                            <Calendar className="w-5 h-5 text-gray-400 mr-2" />
-                            <span className="text-gray-700">
-                              Same day: {formData.checkInDate ? new Date(formData.checkInDate).toLocaleDateString() : 'Select check-in date'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-gray-500 mt-1">
-                            Day picnic - Checkout on same day
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {nights > 0 || selectedLocationDetails?.propertyDetails?.nightStay === false ? (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                      <p className="text-sm text-blue-800">
-                        <strong>Duration:</strong> {selectedLocationDetails?.propertyDetails?.nightStay === false ? 'Day picnic (same day)' : `${nights} night${nights !== 1 ? 's' : ''}`}
-                        {formData.checkInDate && formData.checkOutDate && selectedLocationDetails?.propertyDetails?.nightStay !== false && (
-                          <span className="ml-2">
-                            ({new Date(formData.checkInDate).toLocaleDateString()} to {new Date(formData.checkOutDate).toLocaleDateString()})
-                          </span>
-                        )}
-                        {selectedLocationDetails?.propertyDetails?.nightStay === false && formData.checkInDate && (
-                          <span className="ml-2">
-                            ({new Date(formData.checkInDate).toLocaleDateString()})
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                  ) : null}
                 </div>
-              </LockedSection>
-            ) : (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <Home className="w-5 h-5 mr-2 text-gray-400" />
-                  Location & Dates
-                </h2>
-                
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Select Location *
-                    </label>
-                    {locationsLoading ? (
-                      <div className="flex items-center justify-center py-3">
-                        <LoadingSpinner size="sm" />
-                        <span className="ml-2 text-sm text-gray-600">Loading locations...</span>
-                      </div>
-                    ) : (
-                      <>
-                        <select
-                          name="locationId"
-                          value={formData.locationId}
-                          onChange={handleChange}
-                          required
-                          className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                        >
-                          <option value="">Choose a location</option>
-                          {locations.map(location => (
-                            <option key={location._id} value={location._id}>
-                              {location.name} - {location.address?.city || location.city || 'Unknown City'}
-                              {location.propertyDetails?.nightStay === false ? ' (Day Picnic)' : ' (Night Stay)'}
-                            </option>
-                          ))}
-                        </select>
-                        {locations.length === 0 && !locationsLoading && (
-                          <p className="text-xs text-red-500 mt-1">
-                            No locations available. Please add locations first.
-                          </p>
-                        )}
-                      </>
-                    )}
+                <h3 className="text-xl font-bold text-gray-900 mb-2">Booking Updated!</h3>
+                <p className="text-gray-500 text-sm mb-6">Booking ID: #{updateResult._id?.slice(-8)}</p>
+
+                <div className="bg-gray-50 rounded-xl p-5 mb-6 text-left space-y-3">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Location:</span>
+                    <span className="font-medium">{locationDetails?.name}</span>
                   </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <DateInput
-                      label="Check-in Date"
-                      name="checkInDate"
-                      value={formData.checkInDate}
-                      minDate={new Date().toISOString().split('T')[0]}
-                      onChange={handleChange}
-                    />
-
-                    {/* Show checkout input only for night stays, show text for day picnic */}
-                    {selectedLocationDetails?.propertyDetails?.nightStay !== false ? (
-                      <DateInput
-                        label="Check-out Date"
-                        name="checkOutDate"
-                        value={formData.checkOutDate}
-                        minDate={getMinCheckoutDate()}
-                        onChange={handleChange}
-                      />
-                    ) : (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Check-out Date
-                        </label>
-                        <div className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-gray-50">
-                          <div className="flex items-center">
-                            <Calendar className="w-5 h-5 text-gray-400 mr-2" />
-                            <span className="text-gray-700">
-                              Same day: {formData.checkInDate ? new Date(formData.checkInDate).toLocaleDateString() : 'Select check-in date'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-gray-500 mt-1">
-                            Day picnic - Checkout on same day
-                          </p>
-                        </div>
-                      </div>
-                    )}
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Check-in:</span>
+                    <span className="font-medium">{formatDate(checkInDate)}</span>
                   </div>
-
-                  {(nights > 0 || selectedLocationDetails?.propertyDetails?.nightStay === false) && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                      <p className="text-sm text-blue-800">
-                        <strong>Duration:</strong> {selectedLocationDetails?.propertyDetails?.nightStay === false ? 'Day picnic (same day)' : `${nights} night${nights !== 1 ? 's' : ''}`}
-                        {formData.checkInDate && formData.checkOutDate && selectedLocationDetails?.propertyDetails?.nightStay !== false && (
-                          <span className="ml-2">
-                            ({new Date(formData.checkInDate).toLocaleDateString()} to {new Date(formData.checkOutDate).toLocaleDateString()})
-                          </span>
-                        )}
-                        {selectedLocationDetails?.propertyDetails?.nightStay === false && formData.checkInDate && (
-                          <span className="ml-2">
-                            ({new Date(formData.checkInDate).toLocaleDateString()})
-                          </span>
-                        )}
-                      </p>
-                      {calculatingPrice && (
-                        <p className="text-xs text-blue-600 mt-1">
-                          <LoadingSpinner size="sm" className="inline mr-1" />
-                          Calculating price...
-                        </p>
-                      )}
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Check-out:</span>
+                    <span className="font-medium">{formatDate(checkOutDate)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Guests:</span>
+                    <span className="font-medium">{adults} adults, {kids} kids</span>
+                  </div>
+                  {selectedFoodPackage && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Food:</span>
+                      <span className="font-medium text-green-600">{selectedFoodPackage.name}</span>
                     </div>
                   )}
+                  <div className="pt-3 border-t border-gray-200">
+                    <div className="flex justify-between">
+                      <span className="font-semibold">Total</span>
+                      <span className="font-bold text-blue-600">₹{totalPrice.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Paid</span>
+                      <span className="font-medium text-green-600">₹{(parseFloat(manualAmountPaid) || 0).toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Remaining</span>
+                      <span className="font-medium text-orange-600">₹{remainingAmount.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
 
-                  {/* Booked Dates Display */}
-                  <BookedDatesDisplay />
+                <div className="flex flex-col sm:flex-row gap-3 mb-3">
+                  <button
+                    onClick={() => downloadPDF(updateResult._id)}
+                    className="flex-1 bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 flex items-center justify-center gap-2"
+                  >
+                    <Download size={16} /> Download PDF
+                  </button>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => navigate('/admin/bookings')}
+                    className="flex-1 bg-gray-600 text-white font-semibold py-3 rounded-xl hover:bg-gray-700"
+                  >
+                    Back to List
+                  </button>
                 </div>
               </div>
-            )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-            {/* Guest Information - Always editable */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                <User className="w-5 h-5 mr-2 text-gray-400" />
-                Guest Information
-                {isEditMode && (
-                  <span className="ml-2 text-sm font-normal text-green-600 italic">
-                    (Editable)
-                  </span>
-                )}
-              </h2>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Full Name *
+  // --------------------------------------------------------------------
+  // Edit form
+  return (
+    <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-6xl mx-auto">
+        <div className="mb-4 flex items-center gap-4">
+          <button onClick={() => navigate(-1)} className="p-2 hover:bg-gray-200 rounded-full">
+            <ArrowLeft size={20} className="text-gray-600" />
+          </button>
+          <h1 className="text-2xl font-bold text-gray-900">Edit Booking</h1>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+          {/* Step indicator */}
+          <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-2 text-sm">
+            <div className="flex items-center text-blue-600 font-semibold">
+              <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mr-2 text-xs">1</span>
+              Edit Details
+            </div>
+            <ChevronDown className="w-4 h-4 text-gray-400 rotate-270" />
+            <div className="flex items-center text-gray-500">
+              <span className="w-6 h-6 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center mr-2 text-xs">2</span>
+              Confirmation
+            </div>
+          </div>
+
+          {hasDateConflict && (
+            <div className="mx-6 mt-4 bg-yellow-50 border border-yellow-200 rounded-xl p-3 flex items-start gap-2">
+              <div className="shrink-0 w-5 h-5 bg-yellow-500 rounded-full flex items-center justify-center text-white text-xs font-bold">!</div>
+              <p className="text-sm text-yellow-800">Selected dates overlap with existing bookings.</p>
+            </div>
+          )}
+
+          <div className="flex flex-col lg:flex-row gap-6 p-6">
+            {/* Left column - Form */}
+            <div className="flex-1 space-y-6">
+              {/* Location (disabled) */}
+              <section className="bg-white border border-gray-200 rounded-xl p-5">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Location</label>
+                <input
+                  type="text"
+                  value={locationDetails?.name || ''}
+                  disabled
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-500"
+                />
+              </section>
+
+              {/* Date selection */}
+              <section className="bg-white border border-gray-200 rounded-xl p-5">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-blue-600" /> Dates
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Check‑in *</label>
+                    <input
+                      type="date"
+                      value={checkInDate}
+                      onChange={(e) => setCheckInDate(e.target.value)}
+                      min={new Date().toISOString().split('T')[0]}
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Check‑out *</label>
+                    <input
+                      type="date"
+                      value={sameDayCheckout ? checkInDate : checkOutDate}
+                      onChange={(e) => setCheckOutDate(e.target.value)}
+                      min={checkInDate}
+                      disabled={sameDayCheckout}
+                      required={!sameDayCheckout}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg disabled:bg-gray-100"
+                    />
+                  </div>
+                </div>
+                {locationDetails?.propertyDetails?.nightStay && (
+                  <label className="flex items-center gap-2 mt-3">
+                    <input
+                      type="checkbox"
+                      checked={sameDayCheckout}
+                      onChange={(e) => {
+                        setSameDayCheckout(e.target.checked);
+                        if (e.target.checked) setCheckOutDate(checkInDate);
+                      }}
+                      className="rounded"
+                    />
+                    <span className="text-sm">Same‑day checkout (day picnic)</span>
                   </label>
-                  <div className="relative">
-                    <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                )}
+                {bookedDates.length > 0 && (
+                  <details className="mt-3">
+                    <summary className="text-sm text-gray-600 cursor-pointer">Show booked dates</summary>
+                    <div className="mt-2 text-xs text-gray-500 max-h-24 overflow-y-auto">
+                      {bookedDates.sort().join(', ')}
+                    </div>
+                  </details>
+                )}
+              </section>
+
+              {/* Guest selector */}
+              <section className="bg-white border border-gray-200 rounded-xl p-5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <Users className="w-5 h-5 text-blue-600" /> Guests
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowGuestSelector(!showGuestSelector)}
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    {showGuestSelector ? 'Hide' : 'Change'}
+                  </button>
+                </div>
+                <p className="text-sm text-gray-700 mt-1">
+                  {adults} adult{adults !== 1 && 's'}, {kids} kid{kids !== 1 && 's'}
+                </p>
+                {showGuestSelector && (
+                  <div className="mt-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span>Adults (13+)</span>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => setAdults(Math.max(1, adults - 1))} className="w-8 h-8 border rounded-full">-</button>
+                        <span className="w-6 text-center">{adults}</span>
+                        <button type="button" onClick={() => setAdults(Math.min(locationDetails.capacityOfPersons - kids, adults + 1))} className="w-8 h-8 border rounded-full">+</button>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>Kids (2‑12)</span>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => setKids(Math.max(0, kids - 1))} className="w-8 h-8 border rounded-full">-</button>
+                        <span className="w-6 text-center">{kids}</span>
+                        <button type="button" onClick={() => setKids(Math.min(locationDetails.capacityOfPersons - adults, kids + 1))} className="w-8 h-8 border rounded-full">+</button>
+                      </div>
+                    </div>
+                    {totalGuests > locationDetails.capacityOfPersons && (
+                      <p className="text-xs text-red-600">Max {locationDetails.capacityOfPersons} guests</p>
+                    )}
+                  </div>
+                )}
+              </section>
+
+              {/* Personal Information */}
+              <section className="bg-white border border-gray-200 rounded-xl p-5">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <User className="w-5 h-5 text-blue-600" /> Guest Details
+                </h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
                     <input
                       type="text"
-                      name="name"
                       value={formData.name}
-                      onChange={handleChange}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                       required
-                      className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      placeholder="Enter guest full name"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                     />
                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Phone Number *
-                  </label>
-                  <div className="relative">
-                    <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                    <input
-                      type="tel"
-                      name="phone"
-                      value={formData.phone}
-                      onChange={handleChange}
-                      required
-                      className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      placeholder="Enter phone number"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Phone *</label>
+                      <input
+                        type="tel"
+                        value={formData.phone}
+                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                        pattern="[0-9]{10}"
+                        required
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                      <input
+                        type="email"
+                        value={formData.email}
+                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                        required
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                      />
+                    </div>
                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Email Address
-                  </label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                    <input
-                      type="email"
-                      name="email"
-                      value={formData.email}
-                      onChange={handleChange}
-                      className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      placeholder="Enter email address"
-                    />
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Confirmation PDF will be sent to this email
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Address *
-                  </label>
-                  <div className="relative">
-                    <MapPin className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Address *</label>
                     <textarea
-                      name="address"
                       value={formData.address}
-                      onChange={handleChange}
+                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                      rows={2}
                       required
-                      rows="3"
-                      className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      placeholder="Enter complete address"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                     />
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
+              </section>
 
-          {/* Right Column - Guest Details & Pricing */}
-          <div className="space-y-6">
-            {/* Guest Details - Show as locked in edit mode */}
-            {isEditMode ? (
-              <LockedSection title="Guest Details" icon={Users}>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Adults *
-                      </label>
-                      <input
-                        type="number"
-                        name="adults"
-                        value={formData.adults}
-                        onChange={handleChange}
-                        min="1"
-                        max="20"
-                        required
-                        disabled
-                        className="w-full px-3 py-3 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Kids
-                      </label>
-                      <input
-                        type="number"
-                        name="kids"
-                        value={formData.kids}
-                        onChange={handleChange}
-                        min="0"
-                        max="20"
-                        disabled
-                        className="w-full px-3 py-3 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      name="withFood"
-                      checked={formData.withFood}
-                      onChange={handleChange}
-                      disabled
-                      className="w-4 h-4 text-gray-400 border-gray-300 rounded bg-gray-100 cursor-not-allowed"
-                    />
-                    <label className="ml-2 text-sm text-gray-700 flex items-center">
-                      <Utensils className="w-4 h-4 mr-1" />
-                      Include Food Service (+₹500 per person per day)
-                    </label>
-                  </div>
-                </div>
-              </LockedSection>
-            ) : (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <Users className="w-5 h-5 mr-2 text-gray-400" />
-                  Guest Details
-                </h2>
-                
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Adults *
-                      </label>
-                      <input
-                        type="number"
-                        name="adults"
-                        value={formData.adults}
-                        onChange={handleChange}
-                        min="1"
-                        max="20"
-                        required
-                        className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Kids
-                      </label>
-                      <input
-                        type="number"
-                        name="kids"
-                        value={formData.kids}
-                        onChange={handleChange}
-                        min="0"
-                        max="20"
-                        className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      name="withFood"
-                      checked={formData.withFood}
-                      onChange={handleChange}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <label className="ml-2 text-sm text-gray-700 flex items-center">
-                      <Utensils className="w-4 h-4 mr-1" />
-                      Include Food Service (+₹500 per person per day)
-                    </label>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Pricing & Payment - Show as locked in edit mode */}
-            {isEditMode ? (
-              <LockedSection title="Pricing & Payment" icon={IndianRupee}>
-                <div className="space-y-4">
-                  {/* Payment Type */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Payment Type
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className="flex items-center p-3 border border-gray-300 rounded-lg cursor-not-allowed bg-gray-50">
-                        <input
-                          type="radio"
-                          name="paymentType"
-                          value="full"
-                          checked={formData.paymentType === 'full'}
-                          onChange={handleChange}
-                          disabled
-                          className="text-gray-400"
-                        />
-                        <div className="ml-3">
-                          <span className="text-sm font-medium text-gray-700">Full Payment</span>
-                          <p className="text-xs text-gray-500">Pay entire amount now</p>
-                        </div>
-                      </label>
-                      
-                      <label className="flex items-center p-3 border border-gray-300 rounded-lg cursor-not-allowed bg-gray-50">
-                        <input
-                          type="radio"
-                          name="paymentType"
-                          value="token"
-                          checked={formData.paymentType === 'token'}
-                          onChange={handleChange}
-                          disabled
-                          className="text-gray-400"
-                        />
-                        <div className="ml-3">
-                          <span className="text-sm font-medium text-gray-700">Token Payment</span>
-                          <p className="text-xs text-gray-500">Pay partial amount now</p>
-                        </div>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Payment Breakdown */}
-                  <PaymentBreakdown />
-
-                  {/* Manual Amount Input for Token Payments */}
-                  {formData.paymentType === 'token' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Amount Paid (₹)
-                        </label>
-                        <div className="relative">
-                          <IndianRupee className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                          <input
-                            type="number"
-                            value={formData.amountPaid}
-                            onChange={handleAmountPaidChange}
-                            min="0"
-                            max={formData.pricing.totalPrice}
-                            step="100"
-                            disabled
-                            className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Remaining Amount (₹)
-                        </label>
-                        <div className="relative">
-                          <IndianRupee className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                          <input
-                            type="number"
-                            value={formData.remainingAmount}
-                            readOnly
-                            disabled
-                            className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-500"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </LockedSection>
-            ) : (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <IndianRupee className="w-5 h-5 mr-2 text-gray-400" />
-                  Pricing & Payment
-                </h2>
-                
-                <div className="space-y-4">
-                  {/* Payment Type */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Payment Type
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className="flex items-center p-3 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                        <input
-                          type="radio"
-                          name="paymentType"
-                          value="full"
-                          checked={formData.paymentType === 'full'}
-                          onChange={handleChange}
-                          className="text-blue-600 focus:ring-blue-500"
-                        />
-                        <div className="ml-3">
-                          <span className="text-sm font-medium text-gray-700">Full Payment</span>
-                          <p className="text-xs text-gray-500">Pay entire amount now</p>
-                        </div>
-                      </label>
-                      
-                      <label className="flex items-center p-3 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                        <input
-                          type="radio"
-                          name="paymentType"
-                          value="token"
-                          checked={formData.paymentType === 'token'}
-                          onChange={handleChange}
-                          className="text-blue-600 focus:ring-blue-500"
-                        />
-                        <div className="ml-3">
-                          <span className="text-sm font-medium text-gray-700">Token Payment</span>
-                          <p className="text-xs text-gray-500">Pay partial amount now</p>
-                        </div>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Payment Breakdown */}
-                  <PaymentBreakdown />
-
-                  {/* Manual Amount Input for Token Payments */}
-                  {formData.paymentType === 'token' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Amount Paid (₹)
-                        </label>
-                        <div className="relative">
-                          <IndianRupee className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                          <input
-                            type="number"
-                            value={formData.amountPaid}
-                            onChange={handleAmountPaidChange}
-                            min="0"
-                            max={formData.pricing.totalPrice}
-                            step="100"
-                            className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Remaining Amount (₹)
-                        </label>
-                        <div className="relative">
-                          <IndianRupee className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                          <input
-                            type="number"
-                            value={formData.remainingAmount}
-                            readOnly
-                            className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-gray-50 text-gray-500"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-              <div className="flex space-x-4">
-                <button
-                  type="button"
-                  onClick={() => navigate('/bookings')}
-                  className="flex-1 py-3 px-4 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-colors"
+              {/* Check-in Time */}
+              <section className="bg-white border border-gray-200 rounded-xl p-5">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-blue-600" /> Check-in Time
+                </h3>
+                <select
+                  value={formData.checkInTime}
+                  onChange={(e) => setFormData({ ...formData, checkInTime: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!isFormValid || saving || locations.length === 0}
-                  className="flex-1 py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
-                >
-                  {saving ? (
-                    <LoadingSpinner size="sm" />
-                  ) : (
-                    <>
-                      <Save className="w-4 h-4 mr-2" />
-                      {isEditMode ? 'Update Guest Info' : 'Create Booking'}
-                    </>
-                  )}
-                </button>
-              </div>
+                  {['9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM'].map(t => (
+                    <option key={t}>{t}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-600 mt-2">
+                  {sameDayCheckout ? 'Checkout: 10:00 PM (same day)' : 'Checkout: Next day 10:00 AM'}
+                </p>
+              </section>
 
-              {locations.length === 0 && (
-                <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-xs text-red-800">
-                    <strong>No Locations Available:</strong> Please add locations before creating bookings.
-                  </p>
-                </div>
+              {/* Food Packages */}
+              {getFoodPackages().length > 0 && (
+                <section className="bg-white border border-gray-200 rounded-xl p-5">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <Utensils className="w-5 h-5 text-blue-600" /> Food Packages
+                    {activeOffer && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full ml-2">Special offer</span>}
+                  </h3>
+                  <div className="space-y-3">
+                    <label className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="foodOption"
+                        checked={!selectedFoodPackage}
+                        onChange={() => {
+                          setSelectedFoodPackage(null);
+                          setDailyFoodSelections({});
+                          setShowDailySelection(false);
+                        }}
+                        className="mt-1 w-4 h-4 text-blue-600"
+                      />
+                      <div>
+                        <p className="font-medium text-gray-900">No food required</p>
+                      </div>
+                    </label>
+                    {getFoodPackages().map(pkg => {
+                      const pkgId = pkg.foodPackageId || pkg._id;
+                      return (
+                        <label key={pkgId} className="flex items-start gap-3 p-4 bg-white rounded-lg border border-gray-200 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="foodOption"
+                            checked={selectedFoodPackage?.id === pkgId}
+                            onChange={() => setSelectedFoodPackage({
+                              id: pkgId,
+                              name: pkg.name,
+                              pricePerAdult: pkg.pricePerAdult,
+                              pricePerKid: pkg.pricePerKid,
+                              description: pkg.description,
+                            })}
+                            className="mt-1 w-4 h-4 text-blue-600"
+                          />
+                          <div className="flex-1">
+                            <div className="flex justify-between">
+                              <div>
+                                <p className="font-semibold text-gray-900">{pkg.name}</p>
+                                <p className="text-sm text-gray-600 mt-1">{pkg.description}</p>
+                                {activeOffer && pkg.foodPackageId && (
+                                  <span className="text-xs text-green-600 font-medium">Special offer price</span>
+                                )}
+                              </div>
+                              <div className="text-right">
+                                <p className="font-semibold">₹{pkg.pricePerAdult} <span className="text-sm font-normal">/adult</span></p>
+                                <p className="text-sm text-gray-600">₹{pkg.pricePerKid} /kid</p>
+                              </div>
+                            </div>
+                            {selectedFoodPackage?.id === pkgId && checkInDate && checkOutDate && !sameDayCheckout && (
+                              <div className="mt-4 pt-3 border-t border-gray-200">
+                                <button
+                                  type="button"
+                                  onClick={() => setShowDailySelection(!showDailySelection)}
+                                  className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
+                                >
+                                  {showDailySelection ? 'Hide' : 'Customize'} daily selections
+                                  <ChevronDown size={16} className={`transition-transform ${showDailySelection ? 'rotate-180' : ''}`} />
+                                </button>
+                                {showDailySelection && (
+                                  <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
+                                    {(() => {
+                                      const start = new Date(utcDate(checkInDate));
+                                      const foodDays = days + 1;
+                                      const daysArray = [];
+                                      for (let i = 0; i < foodDays; i++) {
+                                        const d = new Date(start);
+                                        d.setUTCDate(d.getUTCDate() + i);
+                                        const y = d.getUTCFullYear();
+                                        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+                                        const day = String(d.getUTCDate()).padStart(2, '0');
+                                        daysArray.push({
+                                          date: d,
+                                          dateKey: `${y}-${m}-${day}`,
+                                        });
+                                      }
+                                      return daysArray.map(day => (
+                                        <div key={day.dateKey} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                                          <span className="text-sm font-medium">
+                                            {day.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}
+                                          </span>
+                                          <select
+                                            value={dailyFoodSelections[day.dateKey] || ''}
+                                            onChange={e => setDailyFoodSelections(prev => ({ ...prev, [day.dateKey]: e.target.value }))}
+                                            className="text-sm border border-gray-300 rounded px-2 py-1"
+                                          >
+                                            <option value="">No food</option>
+                                            {getFoodPackages().map(p => {
+                                              const pid = p.foodPackageId || p._id;
+                                              return <option key={pid} value={pid}>{p.name}</option>;
+                                            })}
+                                          </select>
+                                        </div>
+                                      ));
+                                    })()}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </section>
               )}
+
+              {/* Payment section */}
+              <section className="bg-white border border-gray-200 rounded-xl p-5">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <CreditCard className="w-5 h-5 text-blue-600" /> Payment
+                </h3>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-6">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="paymentType"
+                        value="token"
+                        checked={paymentType === 'token'}
+                        onChange={() => setPaymentType('token')}
+                      />
+                      <span>Token (50%)</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="paymentType"
+                        value="full"
+                        checked={paymentType === 'full'}
+                        onChange={() => setPaymentType('full')}
+                      />
+                      <span>Full</span>
+                    </label>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Amount Paid (₹)</label>
+                    <input
+                      type="number"
+                      value={manualAmountPaid}
+                      onChange={(e) => setManualAmountPaid(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                      min="0"
+                      step="100"
+                    />
+                  </div>
+
+                  {totalPrice > 0 && (
+                    <div className="bg-blue-50 p-4 rounded-lg">
+                      <div className="flex justify-between text-sm">
+                        <span>Total price (based on current selections)</span>
+                        <span className="font-bold text-blue-600">₹{totalPrice.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span>Amount to pay now</span>
+                        <span className="font-medium text-green-600">₹{(parseFloat(manualAmountPaid) || 0).toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span>Remaining at property</span>
+                        <span className="font-medium text-orange-600">₹{remainingAmount.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
             </div>
+
+            {/* Right column - Summary */}
+            {locationDetails && totalPrice > 0 && (
+              <div className="lg:w-80 xl:w-96 shrink-0">
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-5 sticky top-6 space-y-4">
+                  <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <Calendar className="w-5 h-5 text-blue-600" /> Booking Summary
+                  </h3>
+
+                  <div className="space-y-3 text-sm">
+                    <div className="flex justify-between pb-2 border-b border-gray-200">
+                      <span className="text-gray-600">Dates</span>
+                      <span className="font-medium text-right">
+                        {checkInDate && formatDate(checkInDate)} – {checkOutDate && formatDate(checkOutDate)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Check-in</span>
+                      <span className="font-medium">{formData.checkInTime}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Duration</span>
+                      <span className="font-medium">
+                        {sameDayCheckout ? '1 day' : `${nights} night${nights !== 1 ? 's' : ''}`}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Guests</span>
+                      <span className="font-medium">{adults} adult{adults !== 1 && 's'}, {kids} kid{kids !== 1 && 's'}</span>
+                    </div>
+                    {selectedFoodPackage && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Food</span>
+                        <span className="font-medium text-green-600">{selectedFoodPackage.name}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-3 border-t border-gray-200 space-y-2">
+                    <div className="flex justify-between">
+                      <span>Total price</span>
+                      <span className="font-bold text-blue-600">₹{totalPrice.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Amount to pay now</span>
+                      <span className="font-medium text-green-600">₹{(parseFloat(manualAmountPaid) || 0).toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Remaining at property</span>
+                      <span className="font-medium text-orange-600">₹{remainingAmount.toLocaleString()}</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-4">
+                    <button
+                      onClick={handleUpdate}
+                      disabled={!isFormValid || submitting || offerLoading}
+                      className="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {submitting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" /> Updating...
+                        </>
+                      ) : offerLoading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" /> Checking offers...
+                        </>
+                      ) : (
+                        'Update Booking'
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="bg-white border border-gray-200 rounded-lg p-3 flex items-center gap-2">
+                    <Shield className="w-5 h-5 text-green-600" />
+                    <div>
+                      <p className="text-sm font-medium text-green-800">Admin update</p>
+                      <p className="text-xs text-gray-600">Changes will be saved</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      </form>
+      </div>
     </div>
   );
 };
 
-export default AddEditBooking;
+export default AdminEditBookingPage;

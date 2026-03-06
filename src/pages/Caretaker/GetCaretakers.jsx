@@ -146,7 +146,7 @@ const GetCaretakers = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-3 sm:p-4 md:p-6">
+    <div className="min-h-screen bg-gray-50">
       {toast.show && (
         <Toast 
           message={toast.message} 

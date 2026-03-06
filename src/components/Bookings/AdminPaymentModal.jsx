@@ -1,3 +1,4 @@
+// components/Admin/AdminPaymentModal.jsx
 import React, { useState } from 'react';
 import { X, CreditCard, CheckCircle, AlertCircle } from 'lucide-react';
 import LoadingSpinner from '../ui/LoadingSpinner';

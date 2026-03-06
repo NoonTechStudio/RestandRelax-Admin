@@ -216,7 +216,7 @@ export default function GetImages() {
   }
 
   return (
-    <div className="p-6 bg-gray-50 min-h-screen font-inter">
+    <div className="bg-gray-50 min-h-screen font-inter">
       <Toaster 
         position="top-right" 
         toastOptions={{
@@ -346,7 +346,7 @@ export default function GetImages() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-center mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
             <Image className="w-7 h-7 text-[#008DDA]" />
             Resort Media
           </h1>

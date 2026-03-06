@@ -211,4 +211,4 @@ const LocationAddress = ({ formData, setFormData }) => {
   );
 };
 
-export default LocationAddress;
+export default React.memo(LocationAddress);

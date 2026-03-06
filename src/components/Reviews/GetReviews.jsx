@@ -190,7 +190,7 @@ export default function GetReviews() {
     );
 
   return (
-    <div className="p-4 sm:p-6 bg-gray-50 min-h-screen font-inter">
+    <div className="bg-gray-50 min-h-screen font-inter">
       <Toaster position="top-center sm:top-right" />
       
       {/* Mobile Filter Toggle */}
